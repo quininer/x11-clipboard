@@ -5,7 +5,6 @@ extern crate xcb_util;
 #[macro_use] pub mod error;
 
 use std::thread;
-use std::sync::Arc;
 use xcb::{ Connection, Window, Atom,  };
 use xcb_util::icccm;
 
@@ -20,14 +19,16 @@ pub struct Atoms {
 }
 
 pub struct Clipboard {
-    connection: Connection,
-    window: Window,
-    atoms: Atoms
+    pub connection: Connection,
+    pub window: Window,
+    pub atoms: Atoms,
 }
 
 impl Clipboard {
-    pub fn new() -> error::Result<Arc<Self>> {
-        let (connection, screen) = Connection::connect(None)
+    pub fn new<'a, D>(displayname: D) -> error::Result<Self>
+        where D: Into<Option<&'a str>>
+    {
+        let (connection, screen) = Connection::connect(displayname.into())
             .map_err(|err| err!(XcbConn, err))?;
         let window = connection.generate_id();
 
@@ -50,6 +51,10 @@ impl Clipboard {
             connection.flush();
         }
 
+        Self::from_connection(connection, window)
+    }
+
+    pub fn from_connection(connection: Connection, window: Window) -> error::Result<Self> {
         macro_rules! intern_atom {
             ( $name:expr ) => {
                 xcb::intern_atom(&connection, false, $name)
@@ -67,11 +72,7 @@ impl Clipboard {
             utf8_string: intern_atom!("UTF8_STRING")
         };
 
-        let clipboard = Arc::new(Clipboard { connection, window, atoms });
-
-        run(clipboard.clone());
-
-        Ok(clipboard)
+        Ok(Clipboard { connection, window, atoms })
     }
 
     fn load(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<()> {
@@ -85,27 +86,7 @@ impl Clipboard {
         unimplemented!()
     }
 
-    fn store(&self, selection: Atom) -> error::Result<()> {
+    fn store(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<()> {
         unimplemented!()
     }
-}
-
-fn run(clipboard: Arc<Clipboard>) {
-    thread::spawn(move || {
-        while let Some(event) = clipboard.connection.wait_for_event() {
-            match event.response_type() {
-                xcb::DESTROY_WINDOW => {
-                    let event = xcb::cast_event::<xcb::DestroyNotifyEvent>(&event);
-                    if event.window() == clipboard.window {
-                        break
-                    }
-                },
-                xcb::SELECTION_CLEAR => unimplemented!(),
-                xcb::SELECTION_NOTIFY => unimplemented!(),
-                xcb::SELECTION_REQUEST => unimplemented!(),
-                xcb::PROPERTY_NOTIFY => unimplemented!(),
-                _ => ()
-            }
-        }
-    });
 }
