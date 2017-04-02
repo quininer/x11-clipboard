@@ -20,7 +20,7 @@ pub struct Atoms {
 pub struct Clipboard {
     pub connection: Connection,
     pub window: Window,
-    pub atoms: Atoms,
+    pub atoms: Atoms
 }
 
 impl Clipboard {
@@ -75,8 +75,9 @@ impl Clipboard {
         Ok(Clipboard { connection, window, atoms })
     }
 
-    pub fn load(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<String> {
-        let mut output = String::new();
+    pub fn load(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut is_incr = false;
 
         xcb::convert_selection(
             &self.connection, self.window,
@@ -104,13 +105,41 @@ impl Clipboard {
                         .map_err(|err| err!(XcbGeneric, err))?;
 
                     if reply.type_() == self.atoms.incr {
+                        output.reserve(reply.value_len() as usize);
                         xcb::delete_property(&self.connection, self.window, property);
-                        unimplemented!()
+                        is_incr = true;
+                        continue
                     }
 
-                    output = String::from_utf8(reply.value().into())?;
+                    output.extend_from_slice(reply.value());
                     break
                 },
+                xcb::PROPERTY_NOTIFY if is_incr => {
+                    // XXX how to test it?
+
+                    let event = xcb::cast_event::<xcb::PropertyNotifyEvent>(&event);
+
+                    if event.state() != xcb::PROPERTY_NEW_VALUE as u8 {
+                        continue
+                    }
+
+                    let reply = xcb::get_property(
+                        &self.connection,
+                        true, self.window,
+                        property, xcb::ATOM_ANY,
+                        0, ::std::u32::MAX // FIXME reasonable buffer size
+                    )
+                        .get_reply()
+                        .map_err(|err| err!(XcbGeneric, err))?;
+
+                    let reply_value = reply.value();
+
+                    if reply_value.is_empty() {
+                        break
+                    } else {
+                        output.extend_from_slice(reply_value)
+                    }
+                }
                 _ => ()
             }
         }
