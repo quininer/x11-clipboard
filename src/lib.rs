@@ -76,13 +76,15 @@ impl Clipboard {
     }
 
     pub fn load(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<Vec<u8>> {
-        let mut output = Vec::new();
+        let mut buff = Vec::new();
         let mut is_incr = false;
 
         xcb::convert_selection(
             &self.connection, self.window,
             selection, target, property,
             xcb::CURRENT_TIME
+                // FIXME Clients should not use CurrentTime for the time argument of a ConvertSelection request.
+                // Instead, they should use the timestamp of the event that caused the request to be made.
         );
         self.connection.flush();
 
@@ -97,21 +99,31 @@ impl Clipboard {
 
                     let reply = xcb::get_property(
                         &self.connection,
-                        true, self.window,
+                        false, self.window,
                         event.property(), xcb::ATOM_ANY,
-                        0, ::std::u32::MAX // FIXME reasonable buffer size
+                        buff.len() as u32, ::std::u32::MAX // FIXME reasonable buffer size
                     )
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
 
                     if reply.type_() == self.atoms.incr {
-                        output.reserve(reply.value_len() as usize);
+                        buff.reserve(reply.value::<isize>()[0] as usize);
                         xcb::delete_property(&self.connection, self.window, property);
                         is_incr = true;
                         continue
                     }
 
-                    output.extend_from_slice(reply.value());
+                    if reply.type_() != self.atoms.string
+                        && reply.type_() != self.atoms.utf8_string
+                    {
+                        let name = xcb::get_atom_name(&self.connection, reply.type_())
+                            .get_reply()
+                            .map(|reply| reply.name().to_string())
+                            .unwrap_or(String::from("Unknown"));
+                        return Err(err!(NotSupportType, name));
+                    }
+
+                    buff.extend_from_slice(reply.value());
                     break
                 },
                 xcb::PROPERTY_NOTIFY if is_incr => {
@@ -127,17 +139,25 @@ impl Clipboard {
                         &self.connection,
                         true, self.window,
                         property, xcb::ATOM_ANY,
-                        0, ::std::u32::MAX // FIXME reasonable buffer size
+                        buff.len() as u32, ::std::u32::MAX // FIXME reasonable buffer size
                     )
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
 
-                    let reply_value = reply.value();
+                    if reply.type_() != self.atoms.string
+                        && reply.type_() != self.atoms.utf8_string
+                    {
+                        let name = xcb::get_atom_name(&self.connection, reply.type_())
+                            .get_reply()
+                            .map(|reply| reply.name().to_string())
+                            .unwrap_or(String::from("Unknown"));
+                        return Err(err!(NotSupportType, name));
+                    }
 
-                    if reply_value.is_empty() {
+                    if reply.bytes_after() == 0 {
                         break
                     } else {
-                        output.extend_from_slice(reply_value)
+                        buff.extend_from_slice(reply.value())
                     }
                 }
                 _ => ()
@@ -145,7 +165,7 @@ impl Clipboard {
         }
 
         xcb::delete_property(&self.connection, self.window, property);
-        Ok(output)
+        Ok(buff)
     }
 
     fn store(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<()> {
