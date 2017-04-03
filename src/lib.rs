@@ -4,7 +4,7 @@ extern crate xcb;
 #[macro_use] pub mod error;
 
 use std::thread;
-use xcb::{ Connection, Window, Atom,  };
+use xcb::{ Connection, Window, Atom };
 
 
 pub struct Atoms {
@@ -107,8 +107,9 @@ impl Clipboard {
                         .map_err(|err| err!(XcbGeneric, err))?;
 
                     if reply.type_() == self.atoms.incr {
-                        buff.reserve(reply.value::<isize>()[0] as usize);
+                        buff.reserve(reply.value::<i32>()[0] as usize);
                         xcb::delete_property(&self.connection, self.window, property);
+                        self.connection.flush();
                         is_incr = true;
                         continue
                     }
@@ -119,7 +120,7 @@ impl Clipboard {
                         let name = xcb::get_atom_name(&self.connection, reply.type_())
                             .get_reply()
                             .map(|reply| reply.name().to_string())
-                            .unwrap_or(String::from("Unknown"));
+                            .unwrap_or(format!("Unknown({})", reply.type_()));
                         return Err(err!(NotSupportType, name));
                     }
 
@@ -127,19 +128,27 @@ impl Clipboard {
                     break
                 },
                 xcb::PROPERTY_NOTIFY if is_incr => {
-                    // XXX how to test it?
-
                     let event = xcb::cast_event::<xcb::PropertyNotifyEvent>(&event);
 
                     if event.state() != xcb::PROPERTY_NEW_VALUE as u8 {
                         continue
                     }
 
+                    let length = xcb::get_property(
+                        &self.connection,
+                        false, self.window,
+                        property, xcb::ATOM_ANY,
+                        0, 0
+                    )
+                        .get_reply()
+                        .map(|reply| reply.bytes_after())
+                        .map_err(|err| err!(XcbGeneric, err))?;
+
                     let reply = xcb::get_property(
                         &self.connection,
                         true, self.window,
                         property, xcb::ATOM_ANY,
-                        buff.len() as u32, ::std::u32::MAX // FIXME reasonable buffer size
+                        0, length
                     )
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
@@ -147,28 +156,25 @@ impl Clipboard {
                     if reply.type_() != self.atoms.string
                         && reply.type_() != self.atoms.utf8_string
                     {
-                        let name = xcb::get_atom_name(&self.connection, reply.type_())
-                            .get_reply()
-                            .map(|reply| reply.name().to_string())
-                            .unwrap_or(String::from("Unknown"));
-                        return Err(err!(NotSupportType, name));
+                        continue
                     }
 
-                    if reply.bytes_after() == 0 {
+                    buff.extend_from_slice(reply.value());
+
+                    if reply.value_len() == 0 {
                         break
-                    } else {
-                        buff.extend_from_slice(reply.value())
                     }
-                }
+                },
                 _ => ()
             }
         }
 
         xcb::delete_property(&self.connection, self.window, property);
+        self.connection.flush();
         Ok(buff)
     }
 
-    fn store(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<()> {
+    fn store(&self, selection: Atom, target: Atom, property: Atom, value: &[u8]) -> error::Result<()> {
         unimplemented!()
     }
 }
