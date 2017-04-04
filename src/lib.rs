@@ -83,7 +83,8 @@ impl Clipboard {
             &self.connection, self.window,
             selection, target, property,
             xcb::CURRENT_TIME
-                // FIXME Clients should not use CurrentTime for the time argument of a ConvertSelection request.
+                // FIXME ^
+                // Clients should not use CurrentTime for the time argument of a ConvertSelection request.
                 // Instead, they should use the timestamp of the event that caused the request to be made.
         );
         self.connection.flush();
@@ -114,9 +115,7 @@ impl Clipboard {
                         continue
                     }
 
-                    if reply.type_() != self.atoms.string
-                        && reply.type_() != self.atoms.utf8_string
-                    {
+                    if reply.type_() != target {
                         let name = xcb::get_atom_name(&self.connection, reply.type_())
                             .get_reply()
                             .map(|reply| reply.name().to_string())
@@ -153,9 +152,7 @@ impl Clipboard {
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
 
-                    if reply.type_() != self.atoms.string
-                        && reply.type_() != self.atoms.utf8_string
-                    {
+                    if reply.type_() != target {
                         continue
                     }
 
