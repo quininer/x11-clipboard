@@ -5,6 +5,9 @@ error_chain!{
     }
 
     errors {
+        SetOwner {
+            description("set selection owner fail")
+        }
         XcbConn(err: ::xcb::base::ConnError) {
             description("xcb connection error")
             display("xcb connection error: {:?}", err)
