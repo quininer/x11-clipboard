@@ -2,10 +2,14 @@
 extern crate xcb;
 
 #[macro_use] pub mod error;
+mod run;
 
+use std::thread;
+use std::sync::mpsc::{ Sender, channel };
 use xcb::{ Connection, Window, Atom };
 
 
+#[derive(Clone, Debug)]
 pub struct Atoms {
     pub primary: Atom,
     pub clipboard: Atom,
@@ -16,14 +20,20 @@ pub struct Atoms {
     pub incr: Atom
 }
 
+pub type Data = (Vec<u8>, Atom, Atom);
+
 pub struct Clipboard {
-    pub connection: Connection,
-    pub window: Window,
-    pub atoms: Atoms,
-    pub max_length: usize
+    pub getter: InnerContext,
+    setter: Sender<Data>
 }
 
-impl Clipboard {
+pub struct InnerContext {
+    pub connection: Connection,
+    pub window: Window,
+    pub atoms: Atoms
+}
+
+impl InnerContext {
     pub fn new() -> error::Result<Self> {
         let (connection, screen) = Connection::connect(None)
             .map_err(|err| err!(XcbConn, err))?;
@@ -48,10 +58,6 @@ impl Clipboard {
             connection.flush();
         }
 
-        Self::from_connection(connection, window)
-    }
-
-    pub fn from_connection(connection: Connection, window: Window) -> error::Result<Self> {
         macro_rules! intern_atom {
             ( $name:expr ) => {
                 xcb::intern_atom(&connection, false, $name)
@@ -70,9 +76,23 @@ impl Clipboard {
             utf8_string: intern_atom!("UTF8_STRING"),
             incr: intern_atom!("INCR")
         };
-        let max_length = connection.get_maximum_request_length() as usize * 4;
 
-        Ok(Clipboard { connection, window, atoms, max_length })
+        Ok(InnerContext { connection, window, atoms })
+    }
+}
+
+
+impl Clipboard {
+    pub fn new() -> error::Result<Self> {
+        let getter = InnerContext::new()?;
+        let setter = InnerContext::new()?;
+
+        let (sender, receiver) = channel();
+        let max_length = setter.connection.get_maximum_request_length() as usize * 4;
+
+        thread::spawn(move || run::run(setter, max_length, receiver));
+
+        Ok(Clipboard { getter, setter: sender })
     }
 
     pub fn load(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<Vec<u8>> {
@@ -80,16 +100,16 @@ impl Clipboard {
         let mut is_incr = false;
 
         xcb::convert_selection(
-            &self.connection, self.window,
+            &self.getter.connection, self.getter.window,
             selection, target, property,
             xcb::CURRENT_TIME
                 // FIXME ^
                 // Clients should not use CurrentTime for the time argument of a ConvertSelection request.
                 // Instead, they should use the timestamp of the event that caused the request to be made.
         );
-        self.connection.flush();
+        self.getter.connection.flush();
 
-        while let Some(event) = self.connection.wait_for_event() {
+        while let Some(event) = self.getter.connection.wait_for_event() {
             match event.response_type() & !0x80 {
                 xcb::SELECTION_NOTIFY => {
                     let event = xcb::cast_event::<xcb::SelectionNotifyEvent>(&event);
@@ -99,24 +119,22 @@ impl Clipboard {
                     }
 
                     let reply = xcb::get_property(
-                        &self.connection,
-                        false, self.window,
-                        event.property(), xcb::ATOM_ANY,
-                        buff.len() as u32, ::std::u32::MAX // FIXME reasonable buffer size
+                        &self.getter.connection, false, self.getter.window,
+                        event.property(), xcb::ATOM_ANY, buff.len() as u32, ::std::u32::MAX // FIXME reasonable buffer size
                     )
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
 
-                    if reply.type_() == self.atoms.incr {
+                    if reply.type_() == self.getter.atoms.incr {
                         buff.reserve(reply.value::<i32>()[0] as usize);
-                        xcb::delete_property(&self.connection, self.window, property);
-                        self.connection.flush();
+                        xcb::delete_property(&self.getter.connection, self.getter.window, property);
+                        self.getter.connection.flush();
                         is_incr = true;
                         continue
                     }
 
                     if reply.type_() != target {
-                        let name = xcb::get_atom_name(&self.connection, reply.type_())
+                        let name = xcb::get_atom_name(&self.getter.connection, reply.type_())
                             .get_reply()
                             .map(|reply| reply.name().to_string())
                             .unwrap_or(format!("Unknown({})", reply.type_()));
@@ -134,20 +152,16 @@ impl Clipboard {
                     }
 
                     let length = xcb::get_property(
-                        &self.connection,
-                        false, self.window,
-                        property, xcb::ATOM_ANY,
-                        0, 0
+                        &self.getter.connection, false, self.getter.window,
+                        property, xcb::ATOM_ANY, 0, 0
                     )
                         .get_reply()
                         .map(|reply| reply.bytes_after())
                         .map_err(|err| err!(XcbGeneric, err))?;
 
                     let reply = xcb::get_property(
-                        &self.connection,
-                        true, self.window,
-                        property, xcb::ATOM_ANY,
-                        0, length
+                        &self.getter.connection, true, self.getter.window,
+                        property, xcb::ATOM_ANY, 0, length
                     )
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
@@ -166,82 +180,13 @@ impl Clipboard {
             }
         }
 
-        xcb::delete_property(&self.connection, self.window, property);
-        self.connection.flush();
+        xcb::delete_property(&self.getter.connection, self.getter.window, property);
+        self.getter.connection.flush();
         Ok(buff)
     }
 
-    pub fn store(&self, selection: Atom, target: Atom, property: Atom, value: &[u8]) -> error::Result<()> {
-        xcb::set_selection_owner(
-            &self.connection,
-            self.window, selection,
-            xcb::CURRENT_TIME
-        );
-        self.connection.flush();
-        let use_incr = value.len() > self.max_length - 24;
-
-        let owner = xcb::get_selection_owner(&self.connection, selection)
-            .get_reply()
-            .map_err(|err| err!(XcbGeneric, err))?
-            .owner();
-        if owner != self.window {
-            return Err(err!(SetOwner));
-        }
-
-        while let Some(event) = self.connection.wait_for_event() {
-            println!("> {}", event.response_type());
-
-            match event.response_type() & !0x80 {
-                xcb::SELECTION_REQUEST => {
-                    let event = xcb::cast_event::<xcb::SelectionRequestEvent>(&event);
-
-                    if event.selection() != selection { continue }
-
-                    if event.target() == self.atoms.targets {
-                        xcb::change_property(
-                            &self.connection,
-                            xcb::PROP_MODE_REPLACE as u8,
-                            event.requestor(), event.property(),
-                            xcb::ATOM_ATOM, 32,
-                            &[self.atoms.targets, target]
-                        );
-                    } else if event.target() == target {
-                        if !use_incr {
-                            xcb::change_property(
-                                &self.connection,
-                                xcb::PROP_MODE_REPLACE as u8,
-                                event.requestor(), event.property(),
-                                target, 8, value
-                            );
-                        } else {
-                            unimplemented!()
-                        }
-                    }
-
-                    xcb::send_event(
-                        &self.connection, false, event.requestor(), 0,
-                        &xcb::SelectionNotifyEvent::new(
-                            event.time(),
-                            event.requestor(),
-                            event.selection(),
-                            event.target(),
-                            event.property()
-                        )
-                    );
-                    self.connection.flush();
-                },
-                xcb::PROPERTY_NOTIFY => {
-                    println!("PROPERTY_NOTIFY");
-//                    unimplemented!()
-                },
-                xcb::SELECTION_CLEAR => {
-                    println!("SELECTION_CLEAR")
-//                    unimplemented!()
-                },
-                _ => ()
-            }
-        }
-
-        Ok(())
+    pub fn store(&self, selection: Atom, target: Atom, value: &[u8]) -> error::Result<()> {
+        self.setter.send((value.into(), selection, target))
+            .map_err(Into::into)
     }
 }
