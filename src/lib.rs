@@ -166,15 +166,11 @@ impl Clipboard {
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
 
-                    if reply.type_() != target {
-                        continue
-                    }
+                    if reply.type_() != target { continue };
 
                     buff.extend_from_slice(reply.value());
 
-                    if reply.value_len() == 0 {
-                        break
-                    }
+                    if reply.value_len() == 0 { break };
                 },
                 _ => ()
             }
@@ -189,4 +185,31 @@ impl Clipboard {
         self.setter.send((value.into(), selection, target))
             .map_err(Into::into)
     }
+}
+
+
+#[test]
+fn it_work() {
+    use std::time::Instant;
+    use std::time::Duration;
+    use std::thread::sleep;
+
+    let data = format!("{:?}", Instant::now());
+    let clipboard = Clipboard::new().unwrap();
+
+    clipboard.store(
+        clipboard.getter.atoms.clipboard,
+        clipboard.getter.atoms.utf8_string,
+        data.as_bytes()
+    ).unwrap();
+
+    sleep(Duration::from_secs(1));
+
+    let output = clipboard.load(
+        clipboard.getter.atoms.clipboard,
+        clipboard.getter.atoms.utf8_string,
+        clipboard.getter.atoms.property
+    ).unwrap();
+
+    assert_eq!(output, data.as_bytes());
 }
