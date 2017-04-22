@@ -10,6 +10,8 @@ use std::sync::mpsc::{ Sender, channel };
 use xcb::{ Connection, Window, Atom };
 
 
+pub const INCR_CHUNK_SIZE: usize = 4000;
+
 #[derive(Clone, Debug)]
 pub struct Atoms {
     pub primary: Atom,
@@ -43,7 +45,7 @@ impl InnerContext {
 
         {
             let screen = connection.get_setup().roots().nth(screen as usize)
-                .ok_or(err!(XcbConn, ::xcb::ConnError::ClosedInvalidScreen))?;
+                .ok_or_else(|| err!(XcbConn, ::xcb::ConnError::ClosedInvalidScreen))?;
             xcb::create_window(
                 &connection,
                 xcb::COPY_FROM_PARENT as u8,
@@ -94,7 +96,7 @@ impl Clipboard {
         let (sender_data, receiver_data) = channel();
         let max_length = setter.connection.get_maximum_request_length() as usize * 4;
 
-        thread::spawn(move || run::run(setter2, max_length, receiver_data, receiver_clear));
+        thread::spawn(move || run::run(setter2, max_length, &receiver_data, &receiver_clear));
 
         Ok(Clipboard {
             getter: getter,
@@ -121,10 +123,7 @@ impl Clipboard {
             match event.response_type() & !0x80 {
                 xcb::SELECTION_NOTIFY => {
                     let event = xcb::cast_event::<xcb::SelectionNotifyEvent>(&event);
-
-                    if event.selection() != selection || event.property() != property {
-                        continue
-                    }
+                    if event.selection() != selection || event.property() != property { continue };
 
                     let reply = xcb::get_property(
                         &self.getter.connection, false, self.getter.window,
@@ -134,7 +133,9 @@ impl Clipboard {
                         .map_err(|err| err!(XcbGeneric, err))?;
 
                     if reply.type_() == self.getter.atoms.incr {
-                        buff.reserve(reply.value::<i32>()[0] as usize);
+                        if let Some(&size) = reply.value::<i32>().get(0) {
+                            buff.reserve(size as usize);
+                        }
                         xcb::delete_property(&self.getter.connection, self.getter.window, property);
                         self.getter.connection.flush();
                         is_incr = true;
@@ -145,7 +146,7 @@ impl Clipboard {
                         let name = xcb::get_atom_name(&self.getter.connection, reply.type_())
                             .get_reply()
                             .map(|reply| reply.name().to_string())
-                            .unwrap_or(format!("Unknown({})", reply.type_()));
+                            .unwrap_or_else(|_| format!("Unknown({})", reply.type_()));
                         return Err(err!(NotSupportType, name));
                     }
 
@@ -154,10 +155,7 @@ impl Clipboard {
                 },
                 xcb::PROPERTY_NOTIFY if is_incr => {
                     let event = xcb::cast_event::<xcb::PropertyNotifyEvent>(&event);
-
-                    if event.state() != xcb::PROPERTY_NEW_VALUE as u8 {
-                        continue
-                    }
+                    if event.state() != xcb::PROPERTY_NEW_VALUE as u8 { continue };
 
                     let length = xcb::get_property(
                         &self.getter.connection, false, self.getter.window,
@@ -174,10 +172,14 @@ impl Clipboard {
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
 
+                    {
+                        use std::io::{ self, Write };
+                        writeln!(io::stderr(), "> {}", reply.value_len()).unwrap();
+                        io::stderr().flush().unwrap();
+                    }
+
                     if reply.type_() != target { continue };
-
                     buff.extend_from_slice(reply.value());
-
                     if reply.value_len() == 0 { break };
                 },
                 _ => ()
@@ -191,12 +193,14 @@ impl Clipboard {
 
     pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T) -> error::Result<()> {
         self.send.0.send(())?;
+
         xcb::set_selection_owner(
             &self.setter.connection,
             self.setter.window, selection,
             xcb::CURRENT_TIME
         );
         self.setter.connection.flush();
+
         if !xcb::get_selection_owner(&self.setter.connection, selection)
             .get_reply()
             .map(|reply| reply.owner() == self.setter.window)
@@ -204,6 +208,7 @@ impl Clipboard {
         {
             return Err(err!(SetOwner));
         }
+
         self.send.1.send((value.into(), selection, target))
             .map_err(Into::into)
     }
