@@ -28,7 +28,7 @@ pub type Data = (Vec<u8>, Atom, Atom);
 pub struct Clipboard {
     pub getter: InnerContext,
     pub setter: Arc<InnerContext>,
-    send: (Sender<()>, Sender<Data>)
+    send: Sender<Data>
 }
 
 pub struct InnerContext {
@@ -92,16 +92,15 @@ impl Clipboard {
         let setter = Arc::new(InnerContext::new()?);
         let setter2 = setter.clone();
 
-        let (sender_clear, receiver_clear) = channel();
-        let (sender_data, receiver_data) = channel();
+        let (sender, receiver) = channel();
         let max_length = setter.connection.get_maximum_request_length() as usize * 4;
 
-        thread::spawn(move || run::run(setter2, max_length, &receiver_data, &receiver_clear));
+        thread::spawn(move || run::run(setter2, max_length, &receiver));
 
         Ok(Clipboard {
             getter: getter,
             setter: setter,
-            send: (sender_clear, sender_data)
+            send: sender
         })
     }
 
@@ -192,8 +191,6 @@ impl Clipboard {
     }
 
     pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T) -> error::Result<()> {
-        self.send.0.send(())?;
-
         xcb::set_selection_owner(
             &self.setter.connection,
             self.setter.window, selection,
@@ -209,7 +206,7 @@ impl Clipboard {
             return Err(err!(SetOwner));
         }
 
-        self.send.1.send((value.into(), selection, target))
+        self.send.send((value.into(), selection, target))
             .map_err(Into::into)
     }
 }
