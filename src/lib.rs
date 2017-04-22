@@ -5,6 +5,7 @@ extern crate xcb;
 mod run;
 
 use std::thread;
+use std::sync::Arc;
 use std::sync::mpsc::{ Sender, channel };
 use xcb::{ Connection, Window, Atom };
 
@@ -24,7 +25,8 @@ pub type Data = (Vec<u8>, Atom, Atom);
 
 pub struct Clipboard {
     pub getter: InnerContext,
-    setter: Sender<Data>
+    pub setter: Arc<InnerContext>,
+    send: (Sender<()>, Sender<Data>)
 }
 
 pub struct InnerContext {
@@ -85,14 +87,20 @@ impl InnerContext {
 impl Clipboard {
     pub fn new() -> error::Result<Self> {
         let getter = InnerContext::new()?;
-        let setter = InnerContext::new()?;
+        let setter = Arc::new(InnerContext::new()?);
+        let setter2 = setter.clone();
 
-        let (sender, receiver) = channel();
+        let (sender_clear, receiver_clear) = channel();
+        let (sender_data, receiver_data) = channel();
         let max_length = setter.connection.get_maximum_request_length() as usize * 4;
 
-        thread::spawn(move || run::run(setter, max_length, receiver));
+        thread::spawn(move || run::run(setter2, max_length, receiver_data, receiver_clear));
 
-        Ok(Clipboard { getter, setter: sender })
+        Ok(Clipboard {
+            getter: getter,
+            setter: setter,
+            send: (sender_clear, sender_data)
+        })
     }
 
     pub fn load(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<Vec<u8>> {
@@ -181,8 +189,22 @@ impl Clipboard {
         Ok(buff)
     }
 
-    pub fn store(&self, selection: Atom, target: Atom, value: &[u8]) -> error::Result<()> {
-        self.setter.send((value.into(), selection, target))
+    pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T) -> error::Result<()> {
+        self.send.0.send(())?;
+        xcb::set_selection_owner(
+            &self.setter.connection,
+            self.setter.window, selection,
+            xcb::CURRENT_TIME
+        );
+        self.setter.connection.flush();
+        if !xcb::get_selection_owner(&self.setter.connection, selection)
+            .get_reply()
+            .map(|reply| reply.owner() == self.setter.window)
+            .unwrap_or(false)
+        {
+            return Err(err!(SetOwner));
+        }
+        self.send.1.send((value.into(), selection, target))
             .map_err(Into::into)
     }
 }
@@ -198,11 +220,10 @@ fn it_work() {
     let clipboard = Clipboard::new().unwrap();
 
     clipboard.store(
-        clipboard.getter.atoms.clipboard,
-        clipboard.getter.atoms.utf8_string,
+        clipboard.setter.atoms.clipboard,
+        clipboard.setter.atoms.utf8_string,
         data.as_bytes()
     ).unwrap();
-
     sleep(Duration::from_secs(1));
 
     let output = clipboard.load(
@@ -210,6 +231,27 @@ fn it_work() {
         clipboard.getter.atoms.utf8_string,
         clipboard.getter.atoms.property
     ).unwrap();
+    assert_eq!(output, data.as_bytes());
 
+    let data = format!("{:?}", Instant::now());
+    clipboard.store(
+        clipboard.setter.atoms.clipboard,
+        clipboard.setter.atoms.utf8_string,
+        data.as_bytes()
+    ).unwrap();
+    sleep(Duration::from_secs(1));
+
+    let output = clipboard.load(
+        clipboard.getter.atoms.clipboard,
+        clipboard.getter.atoms.utf8_string,
+        clipboard.getter.atoms.property
+    ).unwrap();
+    assert_eq!(output, data.as_bytes());
+
+    let output = clipboard.load(
+        clipboard.getter.atoms.clipboard,
+        clipboard.getter.atoms.utf8_string,
+        clipboard.getter.atoms.property
+    ).unwrap();
     assert_eq!(output, data.as_bytes());
 }

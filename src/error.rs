@@ -3,6 +3,7 @@ error_chain!{
         Io(::std::io::Error);
         Utf8(::std::string::FromUtf8Error);
         Set(::std::sync::mpsc::SendError<::Data>);
+        Clear(::std::sync::mpsc::SendError<()>);
     }
 
     errors {

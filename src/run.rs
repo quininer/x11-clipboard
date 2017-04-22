@@ -1,31 +1,14 @@
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
-use xcb::{ self, Connection, Atom };
-use ::{ InnerContext, Data };
+use ::{ xcb, InnerContext, Data };
 
 
 #[inline]
-pub fn run(context: InnerContext, max_length: usize, receiver: Receiver<Data>) {
-    for (data, selection, target) in receiver.iter() {
-        xcb::set_selection_owner(
-            &context.connection,
-            context.window, selection,
-            xcb::CURRENT_TIME
-        );
-        context.connection.flush();
-        let use_incr = data.len() > max_length - 24;
+pub fn run(context: Arc<InnerContext>, max_length: usize, receiver_data: Receiver<Data>, receiver_clear: Receiver<()>) {
+    let _ = receiver_clear.recv();
 
-        if let Some(owner) = xcb::get_selection_owner(&context.connection, selection)
-            .get_reply()
-            .into_iter()
-            .map(|reply| reply.owner())
-            .filter(|&owner| owner == context.window)
-            .next()
-        {
-            owner
-        } else {
-            continue
-        };
+    for (data, selection, target) in receiver_data.iter() {
+        let use_incr = data.len() > max_length - 24;
 
         while let Some(event) = context.connection.wait_for_event() {
             match event.response_type() & !0x80 {
@@ -65,8 +48,11 @@ pub fn run(context: InnerContext, max_length: usize, receiver: Receiver<Data>) {
                     context.connection.flush();
                 },
                 xcb::PROPERTY_NOTIFY => { /* TODO */ },
-                xcb::SELECTION_CLEAR => unimplemented!(),
+                xcb::SELECTION_CLEAR => break,
                 _ => ()
+            }
+            if let Ok(()) = receiver_clear.try_recv() {
+                break
             }
         }
     }
