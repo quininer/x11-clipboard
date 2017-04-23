@@ -6,4 +6,3 @@ authors = ["quininer kel <quininer@live.com>"]
 [dependencies]
 error-chain = "*"
 xcb = { version = "*", features = [ "thread" ] }
-xcb-util = { version = "*", features = [ "icccm" ] }

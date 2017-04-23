@@ -6,6 +6,9 @@ error_chain!{
     }
 
     errors {
+        Timeout {
+            description("load selection timeout")
+        }
         SetOwner {
             description("set selection owner fail")
         }

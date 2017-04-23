@@ -5,6 +5,7 @@ extern crate xcb;
 mod run;
 
 use std::thread;
+use std::time::{ Duration, Instant };
 use std::sync::Arc;
 use std::sync::mpsc::{ Sender, channel };
 use xcb::{ Connection, Window, Atom };
@@ -104,9 +105,18 @@ impl Clipboard {
         })
     }
 
-    pub fn load(&self, selection: Atom, target: Atom, property: Atom) -> error::Result<Vec<u8>> {
+    pub fn load<T>(&self, selection: Atom, target: Atom, property: Atom, timeout: T)
+        -> error::Result<Vec<u8>>
+        where T: Into<Option<Duration>>
+    {
         let mut buff = Vec::new();
         let mut is_incr = false;
+        let timeout = timeout.into();
+        let start_time = if timeout.is_some() {
+            Some(Instant::now())
+        } else {
+            None
+        };
 
         xcb::convert_selection(
             &self.getter.connection, self.getter.window,
@@ -119,6 +129,15 @@ impl Clipboard {
         self.getter.connection.flush();
 
         while let Some(event) = self.getter.connection.wait_for_event() {
+            if timeout.into_iter()
+                .zip(start_time)
+                .next()
+                .map(|(timeout, time)| (Instant::now() - time) >= timeout)
+                .unwrap_or(false)
+            {
+                return Err(err!(Timeout));
+            }
+
             match event.response_type() & !0x80 {
                 xcb::SELECTION_NOTIFY => {
                     let event = xcb::cast_event::<xcb::SelectionNotifyEvent>(&event);
@@ -171,12 +190,6 @@ impl Clipboard {
                         .get_reply()
                         .map_err(|err| err!(XcbGeneric, err))?;
 
-                    {
-                        use std::io::{ self, Write };
-                        writeln!(io::stderr(), "> {}", reply.value_len()).unwrap();
-                        io::stderr().flush().unwrap();
-                    }
-
                     if reply.type_() != target { continue };
                     buff.extend_from_slice(reply.value());
                     if reply.value_len() == 0 { break };
@@ -214,10 +227,6 @@ impl Clipboard {
 
 #[test]
 fn it_work() {
-    use std::time::Instant;
-    use std::time::Duration;
-    use std::thread::sleep;
-
     let data = format!("{:?}", Instant::now());
     let clipboard = Clipboard::new().unwrap();
 
@@ -226,12 +235,13 @@ fn it_work() {
         clipboard.setter.atoms.utf8_string,
         data.as_bytes()
     ).unwrap();
-    sleep(Duration::from_secs(1));
+    thread::sleep(Duration::from_secs(1));
 
     let output = clipboard.load(
         clipboard.getter.atoms.clipboard,
         clipboard.getter.atoms.utf8_string,
-        clipboard.getter.atoms.property
+        clipboard.getter.atoms.property,
+        None
     ).unwrap();
     assert_eq!(output, data.as_bytes());
 
@@ -241,19 +251,21 @@ fn it_work() {
         clipboard.setter.atoms.utf8_string,
         data.as_bytes()
     ).unwrap();
-    sleep(Duration::from_secs(1));
+    thread::sleep(Duration::from_secs(1));
 
     let output = clipboard.load(
         clipboard.getter.atoms.clipboard,
         clipboard.getter.atoms.utf8_string,
-        clipboard.getter.atoms.property
+        clipboard.getter.atoms.property,
+        None
     ).unwrap();
     assert_eq!(output, data.as_bytes());
 
     let output = clipboard.load(
         clipboard.getter.atoms.clipboard,
         clipboard.getter.atoms.utf8_string,
-        clipboard.getter.atoms.property
+        clipboard.getter.atoms.property,
+        None
     ).unwrap();
     assert_eq!(output, data.as_bytes());
 }
