@@ -1,11 +1,11 @@
 use std::cmp;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
-use ::{ xcb, INCR_CHUNK_SIZE, InnerContext, Data };
+use ::{ xcb, INCR_CHUNK_SIZE, Context, Data };
 
 
 #[inline]
-pub fn run(context: Arc<InnerContext>, max_length: usize, receiver: &Receiver<Data>) {
+pub fn run(context: Arc<Context>, max_length: usize, receiver: &Receiver<Data>) {
     let mut data = None;
     let mut incr_state = None;
     let mut pos = 0;

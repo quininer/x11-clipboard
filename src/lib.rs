@@ -11,6 +11,7 @@ use std::sync::mpsc::{ Sender, channel };
 use xcb::{ Connection, Window, Atom };
 
 
+type Data = (Vec<u8>, Atom, Atom);
 pub const INCR_CHUNK_SIZE: usize = 4000;
 
 #[derive(Clone, Debug)]
@@ -24,23 +25,22 @@ pub struct Atoms {
     pub incr: Atom
 }
 
-pub type Data = (Vec<u8>, Atom, Atom);
-
+/// X11 Clipboard
 pub struct Clipboard {
-    pub getter: InnerContext,
-    pub setter: Arc<InnerContext>,
+    pub getter: Context,
+    pub setter: Arc<Context>,
     send: Sender<Data>
 }
 
-pub struct InnerContext {
+pub struct Context {
     pub connection: Connection,
     pub window: Window,
     pub atoms: Atoms
 }
 
-impl InnerContext {
-    pub fn new() -> error::Result<Self> {
-        let (connection, screen) = Connection::connect(None)
+impl Context {
+    pub fn new(displayname: Option<&str>) -> error::Result<Self> {
+        let (connection, screen) = Connection::connect(displayname)
             .map_err(|err| err!(XcbConn, err))?;
         let window = connection.generate_id();
 
@@ -82,15 +82,16 @@ impl InnerContext {
             incr: intern_atom!("INCR")
         };
 
-        Ok(InnerContext { connection, window, atoms })
+        Ok(Context { connection, window, atoms })
     }
 }
 
 
 impl Clipboard {
+    /// Create Clipboard.
     pub fn new() -> error::Result<Self> {
-        let getter = InnerContext::new()?;
-        let setter = Arc::new(InnerContext::new()?);
+        let getter = Context::new(None)?;
+        let setter = Arc::new(Context::new(None)?);
         let setter2 = setter.clone();
 
         let (sender, receiver) = channel();
@@ -105,6 +106,7 @@ impl Clipboard {
         })
     }
 
+    /// load value.
     pub fn load<T>(&self, selection: Atom, target: Atom, property: Atom, timeout: T)
         -> error::Result<Vec<u8>>
         where T: Into<Option<Duration>>
@@ -203,6 +205,7 @@ impl Clipboard {
         Ok(buff)
     }
 
+    /// store value.
     pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T) -> error::Result<()> {
         xcb::set_selection_owner(
             &self.setter.connection,
