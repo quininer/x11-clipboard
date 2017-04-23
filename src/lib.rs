@@ -219,10 +219,12 @@ impl Clipboard {
 
     /// store value.
     pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T) -> error::Result<()> {
+        self.send.send(selection)?;
         self.setmap
             .write()
             .map_err(|_| err!(Lock))?
             .insert(selection, (target, value.into()));
+
         xcb::set_selection_owner(
             &self.setter.connection,
             self.setter.window, selection,
@@ -230,16 +232,15 @@ impl Clipboard {
         );
         self.setter.connection.flush();
 
-        if !xcb::get_selection_owner(&self.setter.connection, selection)
+        if xcb::get_selection_owner(&self.setter.connection, selection)
             .get_reply()
             .map(|reply| reply.owner() == self.setter.window)
             .unwrap_or(false)
         {
-            return Err(err!(SetOwner));
+            Ok(())
+        } else {
+            Err(err!(SetOwner))
         }
-
-        self.send.send(selection)
-            .map_err(Into::into)
     }
 }
 

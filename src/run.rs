@@ -47,7 +47,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
                     xcb::change_property(
                         &context.connection, xcb::PROP_MODE_REPLACE as u8,
                         event.requestor(), event.property(), xcb::ATOM_ATOM, 32,
-                        &[context.atoms.targets, context.atoms.property]
+                        &[context.atoms.targets, target]
                     );
                 } else if event.target() == target {
                     if value.len() < max_length - 24 {
@@ -124,11 +124,12 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
             },
             xcb::SELECTION_CLEAR => {
                 let event = xcb::cast_event::<xcb::SelectionClearEvent>(&event);
-                if let Some(property) = incr_map.get(&event.selection()) {
-                    state_map.remove(property);
+                if let Some(property) = incr_map.remove(&event.selection()) {
+                    state_map.remove(&property);
                 }
-                let mut write_setmap = try_continue!(setmap.write().ok());
-                write_setmap.remove(&event.selection());
+                if let Ok(mut write_setmap) = setmap.write() {
+                    write_setmap.remove(&event.selection());
+                }
             },
             _ => ()
         }
