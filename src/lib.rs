@@ -169,14 +169,8 @@ impl Clipboard {
                         self.getter.connection.flush();
                         is_incr = true;
                         continue
-                    }
-
-                    if reply.type_() != target {
-                        let name = xcb::get_atom_name(&self.getter.connection, reply.type_())
-                            .get_reply()
-                            .map(|reply| reply.name().to_string())
-                            .unwrap_or_else(|_| format!("Unknown({})", reply.type_()));
-                        return Err(err!(NotSupportType, name));
+                    } else if reply.type_() != target {
+                        continue
                     }
 
                     buff.extend_from_slice(reply.value());

@@ -23,10 +23,6 @@ error_chain!{
             description("xcb generic error")
             display("xcb generic error code: {}", err.error_code())
         }
-        NotSupportType(err: String) {
-            description("not support reply type.")
-            display("not support reply type: {}", err)
-        }
     }
 }
 
