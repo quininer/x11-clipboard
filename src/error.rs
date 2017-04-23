@@ -2,10 +2,13 @@ error_chain!{
     foreign_links {
         Io(::std::io::Error);
         Utf8(::std::string::FromUtf8Error);
-        Set(::std::sync::mpsc::SendError<::Data>);
+        Set(::std::sync::mpsc::SendError<::xcb::Atom>);
     }
 
     errors {
+        Lock {
+            description("store lock poison")
+        }
         Timeout {
             description("load selection timeout")
         }

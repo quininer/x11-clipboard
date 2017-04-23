@@ -6,12 +6,13 @@ mod run;
 
 use std::thread;
 use std::time::{ Duration, Instant };
-use std::sync::Arc;
+use std::sync::{ Arc, RwLock };
 use std::sync::mpsc::{ Sender, channel };
+use std::collections::HashMap;
 use xcb::{ Connection, Window, Atom };
 
 
-type Data = (Vec<u8>, Atom, Atom);
+type SetMap = Arc<RwLock<HashMap<Atom, (Atom, Vec<u8>)>>>;
 pub const INCR_CHUNK_SIZE: usize = 4000;
 
 #[derive(Clone, Debug)]
@@ -29,7 +30,8 @@ pub struct Atoms {
 pub struct Clipboard {
     pub getter: Context,
     pub setter: Arc<Context>,
-    send: Sender<Data>
+    setmap: SetMap,
+    send: Sender<Atom>
 }
 
 pub struct Context {
@@ -93,15 +95,18 @@ impl Clipboard {
         let getter = Context::new(None)?;
         let setter = Arc::new(Context::new(None)?);
         let setter2 = setter.clone();
+        let setmap = Arc::new(RwLock::new(HashMap::new()));
+        let setmap2 = setmap.clone();
 
         let (sender, receiver) = channel();
         let max_length = setter.connection.get_maximum_request_length() as usize * 4;
 
-        thread::spawn(move || run::run(setter2, max_length, &receiver));
+        thread::spawn(move || run::run(setter2, setmap2, max_length, &receiver));
 
         Ok(Clipboard {
             getter: getter,
             setter: setter,
+            setmap: setmap,
             send: sender
         })
     }
@@ -207,6 +212,10 @@ impl Clipboard {
 
     /// store value.
     pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T) -> error::Result<()> {
+        self.setmap
+            .write()
+            .map_err(|_| err!(Lock))?
+            .insert(selection, (target, value.into()));
         xcb::set_selection_owner(
             &self.setter.connection,
             self.setter.window, selection,
@@ -222,7 +231,7 @@ impl Clipboard {
             return Err(err!(SetOwner));
         }
 
-        self.send.send((value.into(), selection, target))
+        self.send.send(selection)
             .map_err(Into::into)
     }
 }
@@ -233,41 +242,45 @@ fn it_work() {
     let data = format!("{:?}", Instant::now());
     let clipboard = Clipboard::new().unwrap();
 
+    let atom_clipboard = clipboard.setter.atoms.clipboard;
+    let atom_utf8string = clipboard.setter.atoms.utf8_string;
+    let atom_property = clipboard.setter.atoms.property;
+
     clipboard.store(
-        clipboard.setter.atoms.clipboard,
-        clipboard.setter.atoms.utf8_string,
+        atom_clipboard,
+        atom_utf8string,
         data.as_bytes()
     ).unwrap();
     thread::sleep(Duration::from_secs(1));
 
     let output = clipboard.load(
-        clipboard.getter.atoms.clipboard,
-        clipboard.getter.atoms.utf8_string,
-        clipboard.getter.atoms.property,
+        atom_clipboard,
+        atom_utf8string,
+        atom_property,
         None
     ).unwrap();
     assert_eq!(output, data.as_bytes());
 
     let data = format!("{:?}", Instant::now());
     clipboard.store(
-        clipboard.setter.atoms.clipboard,
-        clipboard.setter.atoms.utf8_string,
+        atom_clipboard,
+        atom_utf8string,
         data.as_bytes()
     ).unwrap();
     thread::sleep(Duration::from_secs(1));
 
     let output = clipboard.load(
-        clipboard.getter.atoms.clipboard,
-        clipboard.getter.atoms.utf8_string,
-        clipboard.getter.atoms.property,
+        atom_clipboard,
+        atom_utf8string,
+        atom_property,
         None
     ).unwrap();
     assert_eq!(output, data.as_bytes());
 
     let output = clipboard.load(
-        clipboard.getter.atoms.clipboard,
-        clipboard.getter.atoms.utf8_string,
-        clipboard.getter.atoms.property,
+        atom_clipboard,
+        atom_utf8string,
+        atom_property,
         None
     ).unwrap();
     assert_eq!(output, data.as_bytes());

@@ -1,32 +1,53 @@
 use std::cmp;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
-use ::{ xcb, INCR_CHUNK_SIZE, Context, Data };
+use std::collections::HashMap;
+use xcb::{ self, Atom };
+use ::{ INCR_CHUNK_SIZE, Context, SetMap };
+
+
+
+macro_rules! try_continue {
+    ( $expr:expr ) => {
+        match $expr {
+            Some(val) => val,
+            None => continue
+        }
+    };
+}
+
+struct IncrState {
+    selection: Atom,
+    requestor: Atom,
+    property: Atom,
+    pos: usize
+}
 
 
 #[inline]
-pub fn run(context: Arc<Context>, max_length: usize, receiver: &Receiver<Data>) {
-    let mut data = None;
-    let mut incr_state = None;
-    let mut pos = 0;
+pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &Receiver<Atom>) {
+    let mut incr_map = HashMap::new();
+    let mut state_map = HashMap::new();
 
     while let Some(event) = context.connection.wait_for_event() {
-        if let Ok(recv_data) = receiver.try_recv() {
-            data = Some(recv_data);
-            incr_state = None;
-            pos = 0;
+        if let Some(property) = receiver
+            .try_recv().ok()
+            .and_then(|selection| incr_map.get(&selection))
+        {
+            state_map.remove(property);
         }
 
         match event.response_type() & !0x80 {
-            xcb::SELECTION_REQUEST => if let Some((ref value, selection, target)) = data {
+            xcb::SELECTION_REQUEST => {
                 let event = xcb::cast_event::<xcb::SelectionRequestEvent>(&event);
-                if event.selection() != selection { continue };
+                let read_map = try_continue!(setmap.read().ok());
+                let &(target, ref value) = try_continue!(read_map.get(&event.selection()));
 
                 if event.target() == context.atoms.targets {
                     xcb::change_property(
                         &context.connection, xcb::PROP_MODE_REPLACE as u8,
                         event.requestor(), event.property(), xcb::ATOM_ATOM, 32,
-                        &[context.atoms.targets, target]
+                        &[context.atoms.targets, context.atoms.property]
                     );
                 } else if event.target() == target {
                     if value.len() < max_length - 24 {
@@ -45,8 +66,20 @@ pub fn run(context: Arc<Context>, max_length: usize, receiver: &Receiver<Data>) 
                             event.requestor(), event.property(), context.atoms.incr, 32,
                             &[0u8; 0]
                         );
-                        incr_state = Some((event.requestor(), event.property()));
+
+                        incr_map.insert(event.selection(), event.property());
+                        state_map.insert(
+                            event.property(),
+                            IncrState {
+                                selection: event.selection(),
+                                requestor: event.requestor(),
+                                property: event.property(),
+                                pos: 0
+                            }
+                        );
                     }
+                } else {
+                    continue
                 }
 
                 xcb::send_event(
@@ -61,25 +94,42 @@ pub fn run(context: Arc<Context>, max_length: usize, receiver: &Receiver<Data>) 
                 );
                 context.connection.flush();
             },
-            xcb::PROPERTY_NOTIFY => if let (&Some((ref value, _, target)), Some((requestor, property))) = (&data, incr_state) {
+            xcb::PROPERTY_NOTIFY => {
                 let event = xcb::cast_event::<xcb::PropertyNotifyEvent>(&event);
                 if event.state() != xcb::PROPERTY_DELETE as u8 { continue };
 
-                let len = cmp::min(INCR_CHUNK_SIZE, value.len() - pos);
-                xcb::change_property(
-                    &context.connection, xcb::PROP_MODE_REPLACE as u8,
-                    requestor, property, target, 8,
-                    &value[pos..(pos + len)]
-                );
-                if len == 0 {
-                    pos = 0;
-                    incr_state = None;
-                } else {
-                    pos += len;
+                let is_end = {
+                    let state = try_continue!(state_map.get_mut(&event.atom()));
+                    let read_setmap = try_continue!(setmap.read().ok());
+                    let &(target, ref value) = try_continue!(read_setmap.get(&state.selection));
+
+                    let len = cmp::min(INCR_CHUNK_SIZE, value.len() - state.pos);
+                    xcb::change_property(
+                        &context.connection, xcb::PROP_MODE_REPLACE as u8,
+                        state.requestor, state.property, target, 8,
+                        &value[state.pos..(state.pos + len)]
+                    );
+
+                    if len != 0 {
+                        state.pos += len;
+                    }
+
+                    len == 0
+                };
+
+                if is_end {
+                    state_map.remove(&event.atom());
                 }
                 context.connection.flush();
             },
-            xcb::SELECTION_CLEAR => data = None,
+            xcb::SELECTION_CLEAR => {
+                let event = xcb::cast_event::<xcb::SelectionClearEvent>(&event);
+                if let Some(property) = incr_map.get(&event.selection()) {
+                    state_map.remove(property);
+                }
+                let mut write_setmap = try_continue!(setmap.write().ok());
+                write_setmap.remove(&event.selection());
+            },
             _ => ()
         }
     }
