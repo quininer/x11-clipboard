@@ -84,7 +84,11 @@ impl Context {
             incr: intern_atom!("INCR")
         };
 
-        Ok(Context { connection, window, atoms })
+        Ok(Context {
+            connection: connection,
+            window: window,
+            atoms: atoms
+        })
     }
 }
 
