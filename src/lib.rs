@@ -2,7 +2,7 @@
 extern crate xcb;
 
 #[macro_use] pub mod error;
-mod run;
+#[macro_use] mod run;
 
 use std::thread;
 use std::time::{ Duration, Instant };
@@ -12,8 +12,9 @@ use std::collections::HashMap;
 use xcb::{ Connection, Window, Atom };
 
 
-type SetMap = Arc<RwLock<HashMap<Atom, (Atom, Vec<u8>)>>>;
 pub const INCR_CHUNK_SIZE: usize = 4000;
+const POLL_DURATION: u64 = 1;
+type SetMap = Arc<RwLock<HashMap<Atom, (Atom, Vec<u8>)>>>;
 
 #[derive(Clone, Debug)]
 pub struct Atoms {
@@ -139,7 +140,7 @@ impl Clipboard {
         );
         self.getter.connection.flush();
 
-        while let Some(event) = self.getter.connection.wait_for_event() {
+        loop {
             if timeout.into_iter()
                 .zip(start_time)
                 .next()
@@ -148,6 +149,14 @@ impl Clipboard {
             {
                 return Err(err!(Timeout));
             }
+
+            let event = match self.getter.connection.poll_for_event() {
+                Some(event) => event,
+                None => {
+                    thread::sleep(Duration::from_millis(POLL_DURATION));
+                    continue
+                }
+            };
 
             match event.response_type() & !0x80 {
                 xcb::SELECTION_NOTIFY => {
@@ -244,42 +253,19 @@ fn it_work() {
     let atom_utf8string = clipboard.setter.atoms.utf8_string;
     let atom_property = clipboard.setter.atoms.property;
 
-    clipboard.store(
-        atom_clipboard,
-        atom_utf8string,
-        data.as_bytes()
-    ).unwrap();
+    clipboard.store(atom_clipboard, atom_utf8string, data.as_bytes()).unwrap();
     thread::sleep(Duration::from_secs(1));
 
-    let output = clipboard.load(
-        atom_clipboard,
-        atom_utf8string,
-        atom_property,
-        None
-    ).unwrap();
+    let output = clipboard.load(atom_clipboard, atom_utf8string, atom_property, None).unwrap();
     assert_eq!(output, data.as_bytes());
 
     let data = format!("{:?}", Instant::now());
-    clipboard.store(
-        atom_clipboard,
-        atom_utf8string,
-        data.as_bytes()
-    ).unwrap();
+    clipboard.store(atom_clipboard, atom_utf8string, data.as_bytes()).unwrap();
     thread::sleep(Duration::from_secs(1));
 
-    let output = clipboard.load(
-        atom_clipboard,
-        atom_utf8string,
-        atom_property,
-        None
-    ).unwrap();
+    let output = clipboard.load(atom_clipboard, atom_utf8string, atom_property, None).unwrap();
     assert_eq!(output, data.as_bytes());
 
-    let output = clipboard.load(
-        atom_clipboard,
-        atom_utf8string,
-        atom_property,
-        None
-    ).unwrap();
+    let output = clipboard.load(atom_clipboard, atom_utf8string, atom_property, None).unwrap();
     assert_eq!(output, data.as_bytes());
 }
