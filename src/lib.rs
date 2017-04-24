@@ -2,7 +2,7 @@
 extern crate xcb;
 
 #[macro_use] pub mod error;
-#[macro_use] mod run;
+mod run;
 
 use std::thread;
 use std::time::{ Duration, Instant };
@@ -13,7 +13,7 @@ use xcb::{ Connection, Window, Atom };
 
 
 pub const INCR_CHUNK_SIZE: usize = 4000;
-const POLL_DURATION: u64 = 1;
+const POLL_DURATION: u64 = 50;
 type SetMap = Arc<RwLock<HashMap<Atom, (Atom, Vec<u8>)>>>;
 
 #[derive(Clone, Debug)]
@@ -255,14 +255,12 @@ fn it_work() {
     let atom_property = clipboard.setter.atoms.property;
 
     clipboard.store(atom_clipboard, atom_utf8string, data.as_bytes()).unwrap();
-    thread::sleep(Duration::from_secs(1));
 
     let output = clipboard.load(atom_clipboard, atom_utf8string, atom_property, None).unwrap();
     assert_eq!(output, data.as_bytes());
 
     let data = format!("{:?}", Instant::now());
     clipboard.store(atom_clipboard, atom_utf8string, data.as_bytes()).unwrap();
-    thread::sleep(Duration::from_secs(1));
 
     let output = clipboard.load(atom_clipboard, atom_utf8string, atom_property, None).unwrap();
     assert_eq!(output, data.as_bytes());

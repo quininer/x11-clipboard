@@ -32,9 +32,9 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
     while let Some(event) = context.connection.wait_for_event() {
         if let Some(property) = receiver
             .try_recv().ok()
-            .and_then(|selection| incr_map.get(&selection))
+            .and_then(|selection| incr_map.remove(&selection))
         {
-            state_map.remove(property);
+            state_map.remove(&property);
         }
 
         match event.response_type() & !0x80 {
