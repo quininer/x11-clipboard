@@ -41,6 +41,14 @@ pub struct Context {
     pub atoms: Atoms
 }
 
+#[inline]
+fn get_atom(connection: &Connection, name: &str) -> error::Result<Atom> {
+    xcb::intern_atom(connection, false, name)
+        .get_reply()
+        .map(|reply| reply.atom())
+        .map_err(|err| err!(XcbGeneric, err))
+}
+
 impl Context {
     pub fn new(displayname: Option<&str>) -> error::Result<Self> {
         let (connection, screen) = Connection::connect(displayname)
@@ -68,10 +76,7 @@ impl Context {
 
         macro_rules! intern_atom {
             ( $name:expr ) => {
-                xcb::intern_atom(&connection, false, $name)
-                    .get_reply()
-                    .map_err(|err| err!(XcbGeneric, err))?
-                    .atom()
+                get_atom(&connection, $name)?
             }
         }
 
@@ -90,6 +95,10 @@ impl Context {
             window: window,
             atoms: atoms
         })
+    }
+
+    pub fn get_atom(&self, name: &str) -> error::Result<Atom> {
+        get_atom(&self.connection, name)
     }
 }
 
@@ -153,7 +162,7 @@ impl Clipboard {
             let event = match self.getter.connection.poll_for_event() {
                 Some(event) => event,
                 None => {
-                    thread::sleep(Duration::from_millis(POLL_DURATION));
+                    thread::park_timeout(Duration::from_millis(POLL_DURATION));
                     continue
                 }
             };
