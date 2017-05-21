@@ -9,7 +9,8 @@ use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
 use std::sync::mpsc::{ Sender, channel };
 use std::collections::HashMap;
-use xcb::{ Connection, Window, Atom };
+use xcb::{ Connection, Window };
+pub use xcb::Atom;
 
 
 pub const INCR_CHUNK_SIZE: usize = 4000;
