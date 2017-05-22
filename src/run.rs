@@ -110,10 +110,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
                         &value[state.pos..(state.pos + len)]
                     );
 
-                    if len != 0 {
-                        state.pos += len;
-                    }
-
+                    state.pos += len;
                     len == 0
                 };
 

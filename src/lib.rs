@@ -1,5 +1,5 @@
 #[macro_use] extern crate error_chain;
-extern crate xcb;
+pub extern crate xcb;
 
 #[macro_use] pub mod error;
 mod run;
