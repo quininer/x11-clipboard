@@ -46,13 +46,12 @@ fn get_atom(connection: &Connection, name: &str) -> error::Result<Atom> {
     xcb::intern_atom(connection, false, name)
         .get_reply()
         .map(|reply| reply.atom())
-        .map_err(|err| err!(XcbGeneric, err))
+        .map_err(Into::into)
 }
 
 impl Context {
     pub fn new(displayname: Option<&str>) -> error::Result<Self> {
-        let (connection, screen) = Connection::connect(displayname)
-            .map_err(|err| err!(XcbConn, err))?;
+        let (connection, screen) = Connection::connect(displayname)?;
         let window = connection.generate_id();
 
         {
@@ -169,15 +168,14 @@ impl Clipboard {
 
             match event.response_type() & !0x80 {
                 xcb::SELECTION_NOTIFY => {
-                    let event = xcb::cast_event::<xcb::SelectionNotifyEvent>(&event);
+                    let event = unsafe { xcb::cast_event::<xcb::SelectionNotifyEvent>(&event) };
                     if event.selection() != selection || event.property() != property { continue };
 
                     let reply = xcb::get_property(
                         &self.getter.connection, false, self.getter.window,
                         event.property(), xcb::ATOM_ANY, buff.len() as u32, ::std::u32::MAX // FIXME reasonable buffer size
                     )
-                        .get_reply()
-                        .map_err(|err| err!(XcbGeneric, err))?;
+                        .get_reply()?;
 
                     if reply.type_() == self.getter.atoms.incr {
                         if let Some(&size) = reply.value::<i32>().get(0) {
@@ -195,7 +193,7 @@ impl Clipboard {
                     break
                 },
                 xcb::PROPERTY_NOTIFY if is_incr => {
-                    let event = xcb::cast_event::<xcb::PropertyNotifyEvent>(&event);
+                    let event = unsafe { xcb::cast_event::<xcb::PropertyNotifyEvent>(&event) };
                     if event.state() != xcb::PROPERTY_NEW_VALUE as u8 { continue };
 
                     let length = xcb::get_property(
@@ -203,19 +201,21 @@ impl Clipboard {
                         property, xcb::ATOM_ANY, 0, 0
                     )
                         .get_reply()
-                        .map(|reply| reply.bytes_after())
-                        .map_err(|err| err!(XcbGeneric, err))?;
+                        .map(|reply| reply.bytes_after())?;
 
                     let reply = xcb::get_property(
                         &self.getter.connection, true, self.getter.window,
                         property, xcb::ATOM_ANY, 0, length
                     )
-                        .get_reply()
-                        .map_err(|err| err!(XcbGeneric, err))?;
+                        .get_reply()?;
 
                     if reply.type_() != target { continue };
-                    buff.extend_from_slice(reply.value());
-                    if reply.value_len() == 0 { break };
+
+                    if reply.value_len() != 0 {
+                        buff.extend_from_slice(reply.value());
+                    } else {
+                        break
+                    }
                 },
                 _ => ()
             }
