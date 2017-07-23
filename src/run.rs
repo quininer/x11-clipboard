@@ -30,11 +30,10 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
     let mut state_map = HashMap::new();
 
     while let Some(event) = context.connection.wait_for_event() {
-        if let Some(property) = receiver
-            .try_recv().ok()
-            .and_then(|selection| incr_map.remove(&selection))
-        {
-            state_map.remove(&property);
+        while let Ok(selection) = receiver.try_recv() {
+            if let Some(property) = incr_map.remove(&selection) {
+                state_map.remove(&property);
+            }
         }
 
         match event.response_type() & !0x80 {
