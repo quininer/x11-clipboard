@@ -107,9 +107,9 @@ impl Clipboard {
     pub fn new() -> error::Result<Self> {
         let getter = Context::new(None)?;
         let setter = Arc::new(Context::new(None)?);
-        let setter2 = setter.clone();
+        let setter2 = Arc::clone(&setter);
         let setmap = Arc::new(RwLock::new(HashMap::new()));
-        let setmap2 = setmap.clone();
+        let setmap2 = Arc::clone(&setmap);
 
         let (sender, receiver) = channel();
         let max_length = setter.connection.get_maximum_request_length() as usize * 4;
