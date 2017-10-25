@@ -48,7 +48,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
                         event.requestor(), event.property(), xcb::ATOM_ATOM, 32,
                         &[context.atoms.targets, target]
                     );
-                } else if event.target() == target {
+                } else {
                     if value.len() < max_length - 24 {
                         xcb::change_property(
                             &context.connection, xcb::PROP_MODE_REPLACE as u8,
@@ -77,8 +77,6 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
                             }
                         );
                     }
-                } else {
-                    continue
                 }
 
                 xcb::send_event(
@@ -106,7 +104,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: &
                     xcb::change_property(
                         &context.connection, xcb::PROP_MODE_REPLACE as u8,
                         state.requestor, state.property, target, 8,
-                        &value[state.pos..(state.pos + len)]
+                        &value[state.pos..][..len]
                     );
 
                     state.pos += len;
