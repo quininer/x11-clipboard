@@ -1,7 +1,7 @@
-#[macro_use] extern crate error_chain;
+#[macro_use] extern crate failure;
 pub extern crate xcb;
 
-#[macro_use] pub mod error;
+pub mod error;
 mod run;
 
 use std::thread;
@@ -56,7 +56,7 @@ impl Context {
 
         {
             let screen = connection.get_setup().roots().nth(screen as usize)
-                .ok_or_else(|| err!(XcbConn, ::xcb::ConnError::ClosedInvalidScreen))?;
+                .ok_or(error::Error::XcbConn(::xcb::ConnError::ClosedInvalidScreen))?;
             xcb::create_window(
                 &connection,
                 xcb::COPY_FROM_PARENT as u8,
@@ -152,7 +152,7 @@ impl Clipboard {
                 .map(|(timeout, time)| (Instant::now() - time) >= timeout)
                 .unwrap_or(false)
             {
-                return Err(err!(Timeout));
+                return Err(error::Error::Timeout);
             }
 
             let event = match self.getter.connection.poll_for_event() {
@@ -231,7 +231,7 @@ impl Clipboard {
         self.send.send(selection)?;
         self.setmap
             .write()
-            .map_err(|_| err!(Lock))?
+            .map_err(|_| error::Error::Lock)?
             .insert(selection, (target, value.into()));
 
         xcb::set_selection_owner(
@@ -248,7 +248,7 @@ impl Clipboard {
         {
             Ok(())
         } else {
-            Err(err!(SetOwner))
+            Err(error::Error::Owner)
         }
     }
 }
