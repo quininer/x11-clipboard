@@ -89,11 +89,7 @@ impl Context {
             incr: intern_atom!("INCR")
         };
 
-        Ok(Context {
-            connection: connection,
-            window: window,
-            atoms: atoms
-        })
+        Ok(Context { connection, window, atoms })
     }
 
     pub fn get_atom(&self, name: &str) -> error::Result<Atom> {
@@ -113,14 +109,9 @@ impl Clipboard {
 
         let (sender, receiver) = channel();
         let max_length = setter.connection.get_maximum_request_length() as usize * 4;
-        thread::spawn(move || run::run(setter2, setmap2, max_length, &receiver));
+        thread::spawn(move || run::run(&setter2, &setmap2, max_length, &receiver));
 
-        Ok(Clipboard {
-            getter: getter,
-            setter: setter,
-            setmap: setmap,
-            send: sender
-        })
+        Ok(Clipboard { getter, setter, setmap, send: sender })
     }
 
     /// load value.
