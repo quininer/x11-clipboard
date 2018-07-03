@@ -1,25 +1,30 @@
-pub type Result<T> = ::std::result::Result<T, Error>;
+use std::sync::mpsc::SendError;
+use xcb::{Atom, base::{ConnError, GenericError}};
+use std::fmt;
 
-#[derive(Debug, Fail)]
 #[must_use]
+#[derive(Debug)]
 pub enum Error {
-    #[fail(display = "set atom error: {:?}", _0)]
-    Set(::std::sync::mpsc::SendError<::xcb::Atom>),
-
-    #[fail(display = "xcb connection error: {:?}", _0)]
-    XcbConn(::xcb::base::ConnError),
-
-    #[fail(display = "xcb generic error: {:?}", _0)]
-    XcbGeneric(::xcb::base::GenericError),
-
-    #[fail(display = "store lock poison")]
+    Set(SendError<Atom>),
+    XcbConn(ConnError),
+    XcbGeneric(GenericError),
     Lock,
-
-    #[fail(display = "load selection timeout")]
     Timeout,
-
-    #[fail(display = "set selection owner fail")]
     Owner
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::Error::*;
+        match self {
+            Set(atom) => write!(f, "XCB - couldn't set atom: {:?}", atom),
+            XcbConn(conn_err) => write!(f, "XCB connection error: {:?}", conn_err),
+            XcbGeneric(generic) => write!(f, "XCB generic error: {:?}", generic),
+            Lock => write!(f, "XCB: Lock is poisoned"),
+            Timeout => write!(f, "Selection timed out"),
+            Owner => write!(f, "Failed to set new owner of XCB selection"),
+        }
+    }
 }
 
 macro_rules! define_from {
@@ -32,6 +37,6 @@ macro_rules! define_from {
     }
 }
 
-define_from!(Set from ::std::sync::mpsc::SendError<::xcb::Atom>);
-define_from!(XcbConn from ::xcb::base::ConnError);
-define_from!(XcbGeneric from ::xcb::base::GenericError);
+define_from!(Set from SendError<Atom>);
+define_from!(XcbConn from ConnError);
+define_from!(XcbGeneric from GenericError);

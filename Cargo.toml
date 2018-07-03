@@ -12,5 +12,4 @@ license = "MIT"
 travis-ci = { repository = "quininer/x11-clipboard" }
 
 [dependencies]
-failure = "0.1"
 xcb = { version = "0.8", features = [ "thread" ] }
