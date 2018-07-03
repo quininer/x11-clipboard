@@ -5,8 +5,6 @@ use std::collections::HashMap;
 use xcb::{ self, Atom };
 use ::{ INCR_CHUNK_SIZE, Context, SetMap };
 
-
-
 macro_rules! try_continue {
     ( $expr:expr ) => {
         match $expr {
@@ -22,7 +20,6 @@ struct IncrState {
     property: Atom,
     pos: usize
 }
-
 
 pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver: &Receiver<Atom>) {
     let mut incr_map = HashMap::new();

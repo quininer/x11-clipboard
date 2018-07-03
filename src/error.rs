@@ -1,25 +1,55 @@
-pub type Result<T> = ::std::result::Result<T, Error>;
+use xcb::Atom;
+use xcb::base::{ConnError, GenericError};
+use std::fmt;
+use std::sync::mpsc::SendError;
+use std::error::Error as StdError;
 
-#[derive(Debug, Fail)]
 #[must_use]
+#[derive(Debug)]
 pub enum Error {
-    #[fail(display = "set atom error: {:?}", _0)]
-    Set(::std::sync::mpsc::SendError<::xcb::Atom>),
-
-    #[fail(display = "xcb connection error: {:?}", _0)]
-    XcbConn(::xcb::base::ConnError),
-
-    #[fail(display = "xcb generic error: {:?}", _0)]
-    XcbGeneric(::xcb::base::GenericError),
-
-    #[fail(display = "store lock poison")]
+    Set(SendError<Atom>),
+    XcbConn(ConnError),
+    XcbGeneric(GenericError),
     Lock,
-
-    #[fail(display = "load selection timeout")]
     Timeout,
-
-    #[fail(display = "set selection owner fail")]
     Owner
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::Error::*;
+        match self {
+            Set(e) => write!(f, "{}: {:?}", self.description(), e),
+            XcbConn(e) => write!(f, "{}: {:?}", self.description(), e),
+            XcbGeneric(e) => write!(f, "{}: {:?}", self.description(), e),
+            Lock | Timeout | Owner => write!(f, "{}", self.description()),
+        }
+    }
+}
+
+impl StdError for Error {
+
+    fn description(&self) -> &str {
+        use self::Error::*;
+        match self {
+            Set(_) => "XCB - couldn't set atom",
+            XcbConn(_) => "XCB connection error",
+            XcbGeneric(_) => "XCB generic error",
+            Lock => "XCB: Lock is poisoned",
+            Timeout => "Selection timed out",
+            Owner => "Failed to set new owner of XCB selection",
+        }
+    }
+
+    fn cause(&self) -> Option<&StdError> {
+        use self::Error::*;
+        match self {
+            Set(e) => e.cause(),
+            XcbConn(e) => e.cause(),
+            XcbGeneric(e) => e.cause(),
+            Lock | Timeout | Owner => None,
+        }
+    }
 }
 
 macro_rules! define_from {
@@ -32,6 +62,6 @@ macro_rules! define_from {
     }
 }
 
-define_from!(Set from ::std::sync::mpsc::SendError<::xcb::Atom>);
-define_from!(XcbConn from ::xcb::base::ConnError);
-define_from!(XcbGeneric from ::xcb::base::GenericError);
+define_from!(Set from SendError<Atom>);
+define_from!(XcbConn from ConnError);
+define_from!(XcbGeneric from GenericError);
