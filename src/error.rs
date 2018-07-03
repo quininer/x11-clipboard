@@ -1,6 +1,8 @@
-use std::sync::mpsc::SendError;
-use xcb::{Atom, base::{ConnError, GenericError}};
+use xcb::Atom;
+use xcb::base::{ConnError, GenericError};
 use std::fmt;
+use std::sync::mpsc::SendError;
+use std::error::Error as StdError;
 
 #[must_use]
 #[derive(Debug)]
@@ -17,12 +19,35 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Error::*;
         match self {
-            Set(atom) => write!(f, "XCB - couldn't set atom: {:?}", atom),
-            XcbConn(conn_err) => write!(f, "XCB connection error: {:?}", conn_err),
-            XcbGeneric(generic) => write!(f, "XCB generic error: {:?}", generic),
-            Lock => write!(f, "XCB: Lock is poisoned"),
-            Timeout => write!(f, "Selection timed out"),
-            Owner => write!(f, "Failed to set new owner of XCB selection"),
+            Set(e) => write!(f, "{}: {:?}", self.description(), e),
+            XcbConn(e) => write!(f, "{}: {:?}", self.description(), e),
+            XcbGeneric(e) => write!(f, "{}: {:?}", self.description(), e),
+            Lock | Timeout | Owner => write!(f, "{}", self.description()),
+        }
+    }
+}
+
+impl StdError for Error {
+
+    fn description(&self) -> &str {
+        use self::Error::*;
+        match self {
+            Set(_) => "XCB - couldn't set atom",
+            XcbConn(_) => "XCB connection error",
+            XcbGeneric(_) => "XCB generic error",
+            Lock => "XCB: Lock is poisoned",
+            Timeout => "Selection timed out",
+            Owner => "Failed to set new owner of XCB selection",
+        }
+    }
+
+    fn cause(&self) -> Option<&StdError> {
+        use self::Error::*;
+        match self {
+            Set(e) => e.cause(),
+            XcbConn(e) => e.cause(),
+            XcbGeneric(e) => e.cause(),
+            Lock | Timeout | Owner => None,
         }
     }
 }

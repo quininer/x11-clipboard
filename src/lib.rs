@@ -8,7 +8,8 @@ use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
 use std::sync::mpsc::{ Sender, channel };
 use std::collections::HashMap;
-use xcb::{ Connection, Window, Atom, base::ConnError};
+use xcb::{ Connection, Window, Atom };
+use xcb::base::ConnError;
 use error::Error;
 
 pub const INCR_CHUNK_SIZE: usize = 4000;
@@ -140,7 +141,7 @@ impl Clipboard {
                 .zip(start_time)
                 .next()
                 .map(|(timeout, time)| (Instant::now() - time) >= timeout)
-                .is_some()
+                .unwrap_or(false)
             {
                 return Err(Error::Timeout);
             }
@@ -237,7 +238,7 @@ impl Clipboard {
         if xcb::get_selection_owner(&self.setter.connection, selection)
             .get_reply()
             .map(|reply| reply.owner() == self.setter.window)
-            .is_ok()
+            .unwrap_or(false)
         {
             Ok(())
         } else {
