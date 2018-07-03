@@ -1,6 +1,6 @@
 extern crate x11_clipboard;
 
-use std::time::Instant;
+use std::time::{ Instant, Duration };
 use x11_clipboard::Clipboard;
 
 
@@ -25,5 +25,9 @@ fn it_work() {
     assert_eq!(output, data.as_bytes());
 
     let output = clipboard.load(atom_clipboard, atom_utf8string, atom_property, None).unwrap();
+    assert_eq!(output, data.as_bytes());
+
+    let dur = Duration::from_secs(3);
+    let output = clipboard.load(atom_clipboard, atom_utf8string, atom_property, dur).unwrap();
     assert_eq!(output, data.as_bytes());
 }

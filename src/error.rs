@@ -1,5 +1,5 @@
 use xcb::Atom;
-use xcb::base::{ConnError, GenericError};
+use xcb::base::{ ConnError, GenericError };
 use std::fmt;
 use std::sync::mpsc::SendError;
 use std::error::Error as StdError;
@@ -28,7 +28,6 @@ impl fmt::Display for Error {
 }
 
 impl StdError for Error {
-
     fn description(&self) -> &str {
         use self::Error::*;
         match self {

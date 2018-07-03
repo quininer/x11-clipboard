@@ -218,8 +218,8 @@ impl Clipboard {
     }
 
     /// store value.
-    pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T) 
-    -> Result<(), Error> 
+    pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T)
+        -> Result<(), Error>
     {
         self.send.send(selection)?;
         self.setmap
