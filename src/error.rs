@@ -43,9 +43,9 @@ impl StdError for Error {
     fn cause(&self) -> Option<&StdError> {
         use self::Error::*;
         match self {
-            Set(e) => e.cause(),
-            XcbConn(e) => e.cause(),
-            XcbGeneric(e) => e.cause(),
+            Set(e) => Some(e),
+            XcbConn(e) => Some(e),
+            XcbGeneric(e) => Some(e),
             Lock | Timeout | Owner => None,
         }
     }
