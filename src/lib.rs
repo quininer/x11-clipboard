@@ -37,6 +37,7 @@ pub struct Clipboard {
 
 pub struct Context {
     pub connection: Connection,
+    pub screen: i32,
     pub window: Window,
     pub atoms: Atoms
 }
@@ -89,7 +90,7 @@ impl Context {
             incr: intern_atom!("INCR")
         };
 
-        Ok(Context { connection, window, atoms })
+        Ok(Context { connection, screen, window, atoms })
     }
 
     pub fn get_atom(&self, name: &str) -> Result<Atom, Error> {
@@ -114,27 +115,15 @@ impl Clipboard {
         Ok(Clipboard { getter, setter, setmap, send: sender })
     }
 
-    /// load value.
-    pub fn load<T>(&self, selection: Atom, target: Atom, property: Atom, timeout: T)
-        -> Result<Vec<u8>, Error>
+    fn process_event<T>(&self, buff: &mut Vec<u8>, selection: Atom, target: Atom, property: Atom, timeout: T, use_xfixes: bool, xfixes_event_base: u8)
+        -> Result<(), Error>
         where T: Into<Option<Duration>>
     {
-        let mut buff = Vec::new();
         let mut is_incr = false;
         let timeout = timeout.into();
         let start_time =
             if timeout.is_some() { Some(Instant::now()) }
             else { None };
-
-        xcb::convert_selection(
-            &self.getter.connection, self.getter.window,
-            selection, target, property,
-            xcb::CURRENT_TIME
-                // FIXME ^
-                // Clients should not use CurrentTime for the time argument of a ConvertSelection request.
-                // Instead, they should use the timestamp of the event that caused the request to be made.
-        );
-        self.getter.connection.flush();
 
         loop {
             if timeout.into_iter()
@@ -146,15 +135,38 @@ impl Clipboard {
                 return Err(Error::Timeout);
             }
 
-            let event = match self.getter.connection.poll_for_event() {
-                Some(event) => event,
-                None => {
-                    thread::park_timeout(Duration::from_millis(POLL_DURATION));
-                    continue
+            let event = match use_xfixes {
+                true => {
+                    match self.getter.connection.wait_for_event() {
+                        Some(event) => event,
+                        None => {
+                            continue
+                        }
+                    }
+                },
+                false => {
+                    match self.getter.connection.poll_for_event() {
+                        Some(event) => event,
+                        None => {
+                            thread::park_timeout(Duration::from_millis(POLL_DURATION));
+                            continue
+                        }
+                    }
                 }
             };
 
-            match event.response_type() & !0x80 {
+            let r = event.response_type();
+
+            if use_xfixes && r == (xfixes_event_base + xcb::xfixes::SELECTION_NOTIFY) {
+                let event = unsafe { xcb::cast_event::<xcb::xfixes::SelectionNotifyEvent>(&event) };
+                xcb::convert_selection(&self.getter.connection, self.getter.window,
+                                       selection, target, property,
+                                       event.timestamp());
+                self.getter.connection.flush();
+                continue;
+            }
+
+            match r & !0x80 {
                 xcb::SELECTION_NOTIFY => {
                     let event = unsafe { xcb::cast_event::<xcb::SelectionNotifyEvent>(&event) };
                     if event.selection() != selection || event.property() != property { continue };
@@ -211,7 +223,61 @@ impl Clipboard {
                 _ => ()
             }
         }
+        Ok(())
+    }
 
+    /// load value.
+    pub fn load<T>(&self, selection: Atom, target: Atom, property: Atom, timeout: T)
+        -> Result<Vec<u8>, Error>
+        where T: Into<Option<Duration>>
+    {
+        let mut buff = Vec::new();
+        let timeout = timeout.into();
+
+        xcb::convert_selection(
+            &self.getter.connection, self.getter.window,
+            selection, target, property,
+            xcb::CURRENT_TIME
+                // FIXME ^
+                // Clients should not use CurrentTime for the time argument of a ConvertSelection request.
+                // Instead, they should use the timestamp of the event that caused the request to be made.
+        );
+        self.getter.connection.flush();
+
+        self.process_event(&mut buff, selection, target, property, timeout, false, 0)?;
+        xcb::delete_property(&self.getter.connection, self.getter.window, property);
+        self.getter.connection.flush();
+        Ok(buff)
+    }
+
+    /// wait for a new value and load it
+    pub fn load_wait(&self, selection: Atom, target: Atom, property: Atom)
+        -> Result<Vec<u8>, Error>
+    {
+        let mut buff = Vec::new();
+
+        let screen = &self.getter.connection.get_setup().roots()
+            .nth(self.getter.screen as usize)
+            .ok_or(Error::XcbConn(ConnError::ClosedInvalidScreen))?;
+
+        let xfixes = xcb::query_extension(
+            &self.getter.connection, "XFIXES").get_reply()?;
+        assert!(xfixes.present());
+        xcb::xfixes::query_version(&self.getter.connection, 5, 0);
+        // Clear selection sources...
+        xcb::xfixes::select_selection_input(
+            &self.getter.connection, screen.root(), self.getter.atoms.primary, 0);
+        xcb::xfixes::select_selection_input(
+            &self.getter.connection, screen.root(), self.getter.atoms.clipboard, 0);
+        // ...and set the one requested now
+        xcb::xfixes::select_selection_input(
+            &self.getter.connection, screen.root(), selection,
+            xcb::xfixes::SELECTION_EVENT_MASK_SET_SELECTION_OWNER |
+            xcb::xfixes::SELECTION_EVENT_MASK_SELECTION_CLIENT_CLOSE |
+            xcb::xfixes::SELECTION_EVENT_MASK_SELECTION_WINDOW_DESTROY);
+        self.getter.connection.flush();
+
+        self.process_event(&mut buff, selection, target, property, None, true, xfixes.first_event())?;
         xcb::delete_property(&self.getter.connection, self.getter.window, property);
         self.getter.connection.flush();
         Ok(buff)
