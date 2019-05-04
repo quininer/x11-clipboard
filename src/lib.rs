@@ -169,7 +169,13 @@ impl Clipboard {
             match r & !0x80 {
                 xcb::SELECTION_NOTIFY => {
                     let event = unsafe { xcb::cast_event::<xcb::SelectionNotifyEvent>(&event) };
-                    if event.selection() != selection || event.property() != property { continue };
+                    if event.selection() != selection { continue };
+
+                    // Note that setting the property argument to None indicates that the
+                    // conversion requested could not be made.
+                    if event.property() == xcb::ATOM_NONE {
+                        break;
+                    }
 
                     let reply =
                         xcb::get_property(
