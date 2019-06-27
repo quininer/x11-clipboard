@@ -40,7 +40,7 @@ impl StdError for Error {
         }
     }
 
-    fn cause(&self) -> Option<&StdError> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
         use self::Error::*;
         match self {
             Set(e) => Some(e),
@@ -48,6 +48,10 @@ impl StdError for Error {
             XcbGeneric(e) => Some(e),
             Lock | Timeout | Owner => None,
         }
+    }
+
+    fn cause(&self) -> Option<&dyn StdError> {
+        self.source()
     }
 }
 
