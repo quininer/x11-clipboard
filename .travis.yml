@@ -9,6 +9,6 @@ services:
     - xvfb
 before_script:
     - sudo apt-get update -qq
-    - sudo apt-get install -y libx11-xcb-dev
+    - sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
 script:
     - cargo test
