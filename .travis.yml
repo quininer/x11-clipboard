@@ -5,11 +5,10 @@ cache: cargo
 os:
     - linux
 sudo: required
+services:
+    - xvfb
 before_script:
     - sudo apt-get update -qq
     - sudo apt-get install -y libx11-xcb-dev
-    - "export DISPLAY=:99.0"
-    - "sh -e /etc/init.d/xvfb start"
-    - sleep 3 # give xvfb some time to start
 script:
     - cargo test
