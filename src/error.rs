@@ -29,7 +29,8 @@ impl fmt::Display for Error {
             Lock => write!(f, "XCB: Lock is poisoned"),
             Timeout => write!(f, "Selection timed out"),
             Owner => write!(f, "Failed to set new owner of XCB selection"),
-            _ => unreachable!()
+            UnexpectedType(target) => write!(f, "Unexpected Reply type: {}", target),
+            __Unknown => unreachable!()
         }
     }
 }
@@ -41,8 +42,8 @@ impl StdError for Error {
             Set(e) => Some(e),
             XcbConn(e) => Some(e),
             XcbGeneric(e) => Some(e),
-            Lock | Timeout | Owner => None,
-            _ => unreachable!()
+            Lock | Timeout | Owner | UnexpectedType(_) => None,
+            __Unknown => unreachable!()
         }
     }
 }
