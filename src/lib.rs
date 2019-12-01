@@ -193,11 +193,7 @@ impl Clipboard {
                         is_incr = true;
                         continue
                     } else if reply.type_() != target {
-                        // FIXME
-                        //
-                        // In order not to break api compatibility, we can't add a new ErrorKind.
-                        // This will become an Error in the next version.
-                        return Ok(());
+                        return Err(Error::UnexpectedType(reply.type_()));
                     }
 
                     buff.extend_from_slice(reply.value());

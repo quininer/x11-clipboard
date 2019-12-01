@@ -12,34 +12,29 @@ pub enum Error {
     XcbGeneric(GenericError),
     Lock,
     Timeout,
-    Owner
+    Owner,
+    UnexpectedType(Atom),
+
+    #[doc(hidden)]
+    __Unknown
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Error::*;
         match self {
-            Set(e) => write!(f, "{}: {:?}", self.description(), e),
-            XcbConn(e) => write!(f, "{}: {:?}", self.description(), e),
-            XcbGeneric(e) => write!(f, "{}: {:?}", self.description(), e),
-            Lock | Timeout | Owner => write!(f, "{}", self.description()),
+            Set(e) => write!(f, "XCB - couldn't set atom: {:?}", e),
+            XcbConn(e) => write!(f, "XCB connection error: {:?}", e),
+            XcbGeneric(e) => write!(f, "XCB generic error: {:?}", e),
+            Lock => write!(f, "XCB: Lock is poisoned"),
+            Timeout => write!(f, "Selection timed out"),
+            Owner => write!(f, "Failed to set new owner of XCB selection"),
+            _ => unreachable!()
         }
     }
 }
 
 impl StdError for Error {
-    fn description(&self) -> &str {
-        use self::Error::*;
-        match self {
-            Set(_) => "XCB - couldn't set atom",
-            XcbConn(_) => "XCB connection error",
-            XcbGeneric(_) => "XCB generic error",
-            Lock => "XCB: Lock is poisoned",
-            Timeout => "Selection timed out",
-            Owner => "Failed to set new owner of XCB selection",
-        }
-    }
-
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         use self::Error::*;
         match self {
@@ -47,11 +42,8 @@ impl StdError for Error {
             XcbConn(e) => Some(e),
             XcbGeneric(e) => Some(e),
             Lock | Timeout | Owner => None,
+            _ => unreachable!()
         }
-    }
-
-    fn cause(&self) -> Option<&dyn StdError> {
-        self.source()
     }
 }
 
