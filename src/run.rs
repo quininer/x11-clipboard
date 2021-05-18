@@ -1,6 +1,6 @@
 use std::cmp;
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{ Receiver, TryRecvError };
 use std::collections::HashMap;
 use xcb::{ self, Atom };
 use ::{ INCR_CHUNK_SIZE, Context, SetMap };
@@ -26,9 +26,15 @@ pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver:
     let mut state_map = HashMap::new();
 
     while let Some(event) = context.connection.wait_for_event() {
-        while let Ok(selection) = receiver.try_recv() {
-            if let Some(property) = incr_map.remove(&selection) {
-                state_map.remove(&property);
+        loop {
+            match receiver.try_recv() {
+                Ok(selection) => if let Some(property) = incr_map.remove(&selection) {
+                    state_map.remove(&property);
+                },
+                Err(TryRecvError::Empty) => break(),
+                Err(TryRecvError::Disconnected) => if state_map.is_empty() {
+                    return
+                }
             }
         }
 
