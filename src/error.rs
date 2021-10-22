@@ -1,4 +1,4 @@
-use xcb::Atom;
+use xcb::{Atom, ReplyError};
 use xcb::base::{ ConnError, GenericError };
 use std::fmt;
 use std::sync::mpsc::SendError;
@@ -10,6 +10,7 @@ pub enum Error {
     Set(SendError<Atom>),
     XcbConn(ConnError),
     XcbGeneric(GenericError),
+    XcbReply(ReplyError),
     Lock,
     Timeout,
     Owner,
@@ -26,6 +27,7 @@ impl fmt::Display for Error {
             Set(e) => write!(f, "XCB - couldn't set atom: {:?}", e),
             XcbConn(e) => write!(f, "XCB connection error: {:?}", e),
             XcbGeneric(e) => write!(f, "XCB generic error: {:?}", e),
+            XcbReply(e) => write!(f, "XCB reply error: {:?}", e),
             Lock => write!(f, "XCB: Lock is poisoned"),
             Timeout => write!(f, "Selection timed out"),
             Owner => write!(f, "Failed to set new owner of XCB selection"),
@@ -42,6 +44,7 @@ impl StdError for Error {
             Set(e) => Some(e),
             XcbConn(e) => Some(e),
             XcbGeneric(e) => Some(e),
+            XcbReply(e) => Some(e),
             Lock | Timeout | Owner | UnexpectedType(_) => None,
             __Unknown => unreachable!()
         }
@@ -61,3 +64,4 @@ macro_rules! define_from {
 define_from!(Set from SendError<Atom>);
 define_from!(XcbConn from ConnError);
 define_from!(XcbGeneric from GenericError);
+define_from!(XcbReply from ReplyError);
