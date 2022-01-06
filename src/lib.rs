@@ -292,13 +292,50 @@ impl Clipboard {
         Ok(buff)
     }
 
-    /// store value.
+    /// Store a single value with a single target.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// extern crate x11_clipboard;
+    /// use x11_clipboard::Clipboard;
+    /// use std::time::Instant;
+    /// 
+    /// let data = format!("{:?}", Instant::now());
+    /// let clipboard = Clipboard::new().unwrap();
+    /// 
+    /// let atom_clipboard = clipboard.setter.atoms.clipboard;
+    /// let atom_utf8string = clipboard.setter.atoms.utf8_string;
+    /// 
+    /// clipboard.store(atom_clipboard, atom_utf8string, data.as_bytes()).unwrap();
+    /// ``` 
     pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T)
         -> Result<(), Error>
     {
         self.store_many(selection, HashMap::from_iter([(target, value.into())]))
     }
 
+    /// Store values with multiple different targets.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// extern crate x11_clipboard;
+    /// use x11_clipboard::{xcb::intern_atom, Clipboard};
+    /// use std::collections::HashMap;
+    /// use std::time::Instant;
+    /// 
+    /// let clipboard = Clipboard::new().unwrap();
+    /// 
+    /// let atom_clipboard = clipboard.setter.atoms.clipboard;
+    /// let atom_utf8string = clipboard.setter.atoms.utf8_string;
+    /// let atom_text_plain = intern_atom(&clipboard.setter.connection, false, "text/plain").get_reply().unwrap().atom();
+    /// 
+    /// let mut data = HashMap::new();
+    /// data.insert(atom_utf8string, format!("{:?}", Instant::now()).into());
+    /// data.insert(atom_text_plain, "plaintext".into());
+    /// clipboard.store_many(atom_clipboard, data).unwrap();
+    /// ```
     pub fn store_many(&self, selection: SelectionAtom, target_values: HashMap<TargetAtom, Vec<u8>>) -> Result<(), Error> {
         self.send.send(selection)?;
         self.setmap
