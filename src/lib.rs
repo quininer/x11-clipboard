@@ -3,6 +3,7 @@ pub extern crate xcb;
 pub mod error;
 mod run;
 
+use std::iter::FromIterator;
 use std::thread;
 use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
@@ -14,7 +15,9 @@ use error::Error;
 
 pub const INCR_CHUNK_SIZE: usize = 4000;
 const POLL_DURATION: u64 = 50;
-type SetMap = Arc<RwLock<HashMap<Atom, (Atom, Vec<u8>)>>>;
+type SelectionAtom = Atom;
+type TargetAtom = Atom;
+type SetMap = Arc<RwLock<HashMap<SelectionAtom, HashMap<TargetAtom, Vec<u8>>>>>;
 
 #[derive(Clone, Debug)]
 pub struct Atoms {
@@ -293,11 +296,15 @@ impl Clipboard {
     pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T)
         -> Result<(), Error>
     {
+        self.store_many(selection, HashMap::from_iter([(target, value.into())]))
+    }
+
+    pub fn store_many(&self, selection: SelectionAtom, target_values: HashMap<TargetAtom, Vec<u8>>) -> Result<(), Error> {
         self.send.send(selection)?;
         self.setmap
             .write()
             .map_err(|_| Error::Lock)?
-            .insert(selection, (target, value.into()));
+            .insert(selection, target_values);
 
         xcb::set_selection_owner(
             &self.setter.connection,

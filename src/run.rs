@@ -1,4 +1,5 @@
 use std::cmp;
+use std::iter::once;
 use std::sync::Arc;
 use std::sync::mpsc::{ Receiver, TryRecvError };
 use std::collections::HashMap;
@@ -18,6 +19,7 @@ struct IncrState {
     selection: Atom,
     requestor: Atom,
     property: Atom,
+    target: Atom,
     pos: usize
 }
 
@@ -42,41 +44,59 @@ pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver:
             xcb::SELECTION_REQUEST => {
                 let event = unsafe { xcb::cast_event::<xcb::SelectionRequestEvent>(&event) };
                 let read_map = try_continue!(setmap.read().ok());
-                let &(target, ref value) = try_continue!(read_map.get(&event.selection()));
+                let target_values_map = try_continue!(read_map.get(&event.selection()));
 
                 if event.target() == context.atoms.targets {
+                    let all_targets: Vec<_> = target_values_map.keys().copied().chain(once(context.atoms.targets)).collect();
                     xcb::change_property(
                         &context.connection, xcb::PROP_MODE_REPLACE as u8,
                         event.requestor(), event.property(), xcb::ATOM_ATOM, 32,
-                        &[context.atoms.targets, target]
+                        &all_targets
                     );
-                } else if value.len() < max_length - 24 {
-                    xcb::change_property(
-                        &context.connection, xcb::PROP_MODE_REPLACE as u8,
-                        event.requestor(), event.property(), target, 8,
-                        value
-                    );
+                } else if let Some(value) = target_values_map.get(&event.target()) {
+                    if value.len() < max_length - 24 {
+                        xcb::change_property(
+                            &context.connection, xcb::PROP_MODE_REPLACE as u8,
+                            event.requestor(), event.property(), event.target(), 8,
+                            value
+                        );
+                    } else {
+                        xcb::change_window_attributes(
+                            &context.connection, event.requestor(),
+                            &[(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_PROPERTY_CHANGE)]
+                        );
+                        xcb::change_property(
+                            &context.connection, xcb::PROP_MODE_REPLACE as u8,
+                            event.requestor(), event.property(), context.atoms.incr, 32,
+                            &[0u8; 0]
+                        );
+    
+                        incr_map.insert(event.selection(), event.property());
+                        state_map.insert(
+                            event.property(),
+                            IncrState {
+                                selection: event.selection(),
+                                requestor: event.requestor(),
+                                property: event.property(),
+                                target: event.target(),
+                                pos: 0
+                            }
+                        );
+                    }
                 } else {
-                    xcb::change_window_attributes(
-                        &context.connection, event.requestor(),
-                        &[(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_PROPERTY_CHANGE)]
+                    // Unsupported target type. Return "none"
+                    xcb::send_event(
+                        &context.connection, false, event.requestor(), 0,
+                        &xcb::SelectionNotifyEvent::new(
+                            event.time(),
+                            event.requestor(),
+                            event.selection(),
+                            event.target(),
+                            xcb::ATOM_NONE
+                        )
                     );
-                    xcb::change_property(
-                        &context.connection, xcb::PROP_MODE_REPLACE as u8,
-                        event.requestor(), event.property(), context.atoms.incr, 32,
-                        &[0u8; 0]
-                    );
-
-                    incr_map.insert(event.selection(), event.property());
-                    state_map.insert(
-                        event.property(),
-                        IncrState {
-                            selection: event.selection(),
-                            requestor: event.requestor(),
-                            property: event.property(),
-                            pos: 0
-                        }
-                    );
+                    context.connection.flush();
+                    continue;
                 }
 
                 xcb::send_event(
@@ -98,12 +118,13 @@ pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver:
                 let is_end = {
                     let state = try_continue!(state_map.get_mut(&event.atom()));
                     let read_setmap = try_continue!(setmap.read().ok());
-                    let &(target, ref value) = try_continue!(read_setmap.get(&state.selection));
+                    let target_values_map = try_continue!(read_setmap.get(&state.selection));
+                    let value = try_continue!(target_values_map.get(&state.target));
 
                     let len = cmp::min(INCR_CHUNK_SIZE, value.len() - state.pos);
                     xcb::change_property(
                         &context.connection, xcb::PROP_MODE_REPLACE as u8,
-                        state.requestor, state.property, target, 8,
+                        state.requestor, state.property, state.target, 8,
                         &value[state.pos..][..len]
                     );
 
