@@ -8,7 +8,7 @@ use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
 use std::sync::mpsc::{ Sender, channel };
 use std::collections::HashMap;
-use xcb::{ ConnError, Connection, Xid };
+use xcb::{ ConnError, Connection, Extension, Xid };
 use xcb::{ x, xfixes };
 use error::Error;
 
@@ -88,7 +88,7 @@ fn get_atom(connection: &Connection, name: &str) -> Result<x::Atom, Error> {
 
 impl Context {
     pub fn new(displayname: Option<&str>) -> Result<Self, Error> {
-        let (connection, screen) = Connection::connect_with_extensions(displayname,  &[], &[])?;
+        let (connection, screen) = Connection::connect_with_extensions(displayname,  &[Extension::XFixes], &[])?;
         let window = connection.generate_id();
 
         {
