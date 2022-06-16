@@ -2,7 +2,10 @@ use std::cmp;
 use std::sync::Arc;
 use std::sync::mpsc::{ Receiver, TryRecvError };
 use std::collections::HashMap;
-use xcb::{ self, x };
+use ::{AtomEnum, EventMask};
+use x11rb::connection::Connection;
+use x11rb::protocol::Event;
+use x11rb::protocol::xproto::{Atom, ChangeWindowAttributesAux, ConnectionExt, Property, PropMode, SELECTION_NOTIFY_EVENT, SelectionNotifyEvent, Window};
 use ::{ INCR_CHUNK_SIZE, Context, SetMap };
 
 macro_rules! try_continue {
@@ -15,15 +18,15 @@ macro_rules! try_continue {
 }
 
 struct IncrState {
-    selection: x::Atom,
-    requestor: x::Window,
-    property: x::Atom,
+    selection: Atom,
+    requestor: Window,
+    property: Atom,
     pos: usize
 }
 
-pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver: &Receiver<x::Atom>) {
-    let mut incr_map = HashMap::<x::Atom, x::Atom>::new();
-    let mut state_map = HashMap::<x::Atom, IncrState>::new();
+pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver: &Receiver<Atom>) {
+    let mut incr_map = HashMap::<Atom, Atom>::new();
+    let mut state_map = HashMap::<Atom, IncrState>::new();
 
 
     while let Ok(event) = context.connection.wait_for_event() {
@@ -32,7 +35,7 @@ pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver:
                 Ok(selection) => if let Some(property) = incr_map.remove(&selection) {
                     state_map.remove(&property);
                 },
-                Err(TryRecvError::Empty) => break(),
+                Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => if state_map.is_empty() {
                     return
                 }
@@ -40,95 +43,103 @@ pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver:
         }
 
         match event {
-            xcb::Event::X(x::Event::SelectionRequest(event)) => {
+            Event::SelectionRequest(event) => {
                 let read_map = try_continue!(setmap.read().ok());
-                let &(target, ref value) = try_continue!(read_map.get(&event.selection()));
+                let &(target, ref value) = try_continue!(read_map.get(&event.selection));
 
-                if event.target() == context.atoms.targets {
-                    context.connection.send_request(&x::ChangeProperty {
-                        mode: x::PropMode::Replace,
-                        window: event.requestor(),
-                        property: event.property(),
-                        r#type: x::ATOM_ATOM,
-                        data: &[context.atoms.targets, target],
-                    });
+                if event.target == context.atoms.targets {
+                    let _ = x11rb::wrapper::ConnectionExt::change_property32(
+                        &context.connection,
+                        PropMode::REPLACE,
+                        event.requestor,
+                        event.property,
+                        Atom::from(AtomEnum::ATOM),
+                        &[context.atoms.targets, target]
+                    );
                 } else if value.len() < max_length - 24 {
-                    context.connection.send_request(&x::ChangeProperty {
-                        mode: x::PropMode::Replace,
-                        window: event.requestor(),
-                        property: event.property(),
-                        r#type: target,
-                        data: &value,
-                    });
+                    let _ = x11rb::wrapper::ConnectionExt::change_property8(
+                        &context.connection,
+                        PropMode::REPLACE,
+                        event.requestor,
+                        event.property,
+                        target,
+                        value
+                    );
                 } else {
-                    context.connection.send_request(&x::ChangeWindowAttributes {
-                        window: event.requestor(),
-                        value_list: &[x::Cw::EventMask(x::EventMask::PROPERTY_CHANGE)],
-                    });
-                    context.connection.send_request(&x::ChangeProperty {
-                        mode: x::PropMode::Replace,
-                        window: event.requestor(),
-                        property: event.property(),
-                        r#type: context.atoms.incr,
-                        data: &[0u32; 0],
-                    });
-
-                    incr_map.insert(event.selection(), event.property());
+                    let _ = context.connection.change_window_attributes(
+                        event.requestor,
+                        &ChangeWindowAttributesAux::new()
+                            .event_mask(EventMask::PROPERTY_CHANGE)
+                    );
+                    let _ = x11rb::wrapper::ConnectionExt::change_property32(
+                        &context.connection,
+                        PropMode::REPLACE,
+                        event.requestor,
+                        event.property,
+                        context.atoms.incr,
+                        &[0u32; 0],
+                    );
+                    incr_map.insert(event.selection, event.property);
                     state_map.insert(
-                        event.property(),
+                        event.property,
                         IncrState {
-                            selection: event.selection(),
-                            requestor: event.requestor(),
-                            property: event.property(),
+                            selection: event.selection,
+                            requestor: event.requestor,
+                            property: event.property,
                             pos: 0
                         }
                     );
                 }
-
-                context.connection.send_request(&x::SendEvent {
-                    propagate: false,
-                    destination: x::SendEventDest::Window(event.requestor()),
-                    event_mask: x::EventMask::empty(),
-                    event: &x::SelectionNotifyEvent::new(
-                        event.time(), event.requestor(), event.selection(), event.target(), event.property()
-                    )
-                });
+                let _ = context.connection.send_event(
+                    false,
+                    event.requestor,
+                    EventMask::default(),
+                    SelectionNotifyEvent {
+                        response_type: SELECTION_NOTIFY_EVENT,
+                        sequence: 0,
+                        time: event.time,
+                        requestor: event.requestor,
+                        selection: event.selection,
+                        target,
+                        property: event.property
+                    }
+                );
                 let _ = context.connection.flush();
             },
-            xcb::Event::X(x::Event::PropertyNotify(event)) => {
-                if event.state() != x::Property::Delete { continue };
+            Event::PropertyNotify(event) => {
+                if event.state != Property::DELETE { continue };
 
                 let is_end = {
-                    let state = try_continue!(state_map.get_mut(&event.atom()));
+                    let state = try_continue!(state_map.get_mut(&event.atom));
                     let read_setmap = try_continue!(setmap.read().ok());
                     let &(target, ref value) = try_continue!(read_setmap.get(&state.selection));
 
                     let len = cmp::min(INCR_CHUNK_SIZE, value.len() - state.pos);
-                    context.connection.send_request(&x::ChangeProperty {
-                        mode: x::PropMode::Replace,
-                        window: state.requestor,
-                        property: state.property,
-                        r#type: target,
-                        data: &value[state.pos..][..len],
-                    });
-
+                    let _ = x11rb::wrapper::ConnectionExt::change_property8(
+                        &context.connection,
+                        PropMode::REPLACE,
+                        state.requestor,
+                        state.property,
+                        target,
+                        &value[state.pos..][..len]
+                    );
                     state.pos += len;
                     len == 0
                 };
 
                 if is_end {
-                    state_map.remove(&event.atom());
+                    state_map.remove(&event.atom);
                 }
                 let _ = context.connection.flush();
             },
-            xcb::Event::X(x::Event::SelectionClear(event)) => {
-                if let Some(property) = incr_map.remove(&event.selection()) {
+            Event::SelectionClear(event) => {
+                if let Some(property) = incr_map.remove(&event.selection) {
                     state_map.remove(&property);
                 }
                 if let Ok(mut write_setmap) = setmap.write() {
-                    write_setmap.remove(&event.selection());
+                    write_setmap.remove(&event.selection);
                 }
-            },
+            }
             _ => ()
         }
     }
