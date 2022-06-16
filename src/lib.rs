@@ -1,4 +1,4 @@
-pub extern crate xcb;
+extern crate x11rb;
 
 pub mod error;
 mod run;
@@ -8,55 +8,59 @@ use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
 use std::sync::mpsc::{ Sender, channel };
 use std::collections::HashMap;
-use xcb::{ ConnError, Connection, Extension, Xid };
-use xcb::{ x, xfixes };
+use x11rb::connection::{Connection, RequestConnection};
+use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
+use x11rb::errors::ConnectError;
+use x11rb::protocol::{Event, xfixes};
+use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, Property, Window, WindowClass};
+use x11rb::rust_connection::RustConnection;
 use error::Error;
 
 pub const INCR_CHUNK_SIZE: usize = 4000;
 const POLL_DURATION: u64 = 50;
-type SetMap = Arc<RwLock<HashMap<x::Atom, (x::Atom, Vec<u8>)>>>;
+type SetMap = Arc<RwLock<HashMap<Atom, (Atom, Vec<u8>)>>>;
 
 #[derive(Clone, Debug)]
 pub struct Atoms {
-    pub primary: x::Atom,
-    pub clipboard: x::Atom,
-    pub property: x::Atom,
-    pub targets: x::Atom,
-    pub string: x::Atom,
-    pub utf8_string: x::Atom,
-    pub incr: x::Atom,
+    pub primary: Atom,
+    pub clipboard: Atom,
+    pub property: Atom,
+    pub targets: Atom,
+    pub string: Atom,
+    pub utf8_string: Atom,
+    pub incr: Atom,
 }
 
 impl Atoms {
-    fn intern_all(conn: &xcb::Connection) -> xcb::Result<Atoms> {
-        let clipboard = conn.send_request(&x::InternAtom{
-            only_if_exists: false,
-            name: b"CLIPBOARD",
-        });
-        let property = conn.send_request(&x::InternAtom{
-            only_if_exists: false,
-            name: b"THIS_CLIPBOARD_OUT",
-        });
-        let targets = conn.send_request(&x::InternAtom{
-            only_if_exists: false,
-            name: b"TARGETS",
-        });
-        let utf8_string = conn.send_request(&x::InternAtom{
-            only_if_exists: false,
-            name: b"UTF8_STRING",
-        });
-        let incr = conn.send_request(&x::InternAtom{
-            only_if_exists: false,
-            name: b"INCR",
-        });
+    fn intern_all(conn: &RustConnection) -> Result<Atoms, Error> {
+        let clipboard = conn.intern_atom(
+            false,
+            b"CLIPBOARD",
+        )?;
+        let property = conn.intern_atom(
+            false,
+            b"THIS_CLIPBOARD_OUT",
+        )?;
+        let targets = conn.intern_atom(
+            false,
+            b"TARGETS",
+        )?;
+        let utf8_string = conn.intern_atom(
+            false,
+            b"UTF8_STRING",
+        )?;
+        let incr = conn.intern_atom(
+            false,
+            b"INCR",
+        )?;
         Ok(Atoms {
-            primary: x::ATOM_PRIMARY,
-            clipboard: conn.wait_for_reply(clipboard)?.atom(),
-            property: conn.wait_for_reply(property)?.atom(),
-            targets: conn.wait_for_reply(targets)?.atom(),
-            string: x::ATOM_STRING,
-            utf8_string: conn.wait_for_reply(utf8_string)?.atom(),
-            incr: conn.wait_for_reply(incr)?.atom(),
+            primary: Atom::from(AtomEnum::PRIMARY),
+            clipboard: clipboard.reply()?.atom,
+            property: property.reply()?.atom,
+            targets: targets.reply()?.atom,
+            string: Atom::from(AtomEnum::STRING),
+            utf8_string: utf8_string.reply()?.atom,
+            incr: incr.reply()?.atom,
         })
     }
 }
@@ -66,49 +70,50 @@ pub struct Clipboard {
     pub getter: Context,
     pub setter: Arc<Context>,
     setmap: SetMap,
-    send: Sender<x::Atom>
+    send: Sender<Atom>
 }
 
 pub struct Context {
-    pub connection: Connection,
-    pub screen: i32,
-    pub window: x::Window,
+    pub connection: RustConnection,
+    pub screen: usize,
+    pub window: Window,
     pub atoms: Atoms
 }
 
 #[inline]
-fn get_atom(connection: &Connection, name: &str) -> Result<x::Atom, Error> {
-    let cookie = connection.send_request(&x::InternAtom {
-        only_if_exists: false,
-        name: name.as_bytes()
-    });
-    let reply = connection.wait_for_reply(cookie)?;
-    Ok(reply.atom())
+fn get_atom(connection: &RustConnection, name: &str) -> Result<Atom, Error> {
+    let intern_atom = connection.intern_atom(
+        false,
+        name.as_bytes()
+    )?;
+    let reply = intern_atom.reply()
+        .map_err(Error::XcbReply)?;
+    Ok(reply.atom)
 }
 
 impl Context {
     pub fn new(displayname: Option<&str>) -> Result<Self, Error> {
-        let (connection, screen) = Connection::connect_with_extensions(displayname,  &[Extension::XFixes], &[])?;
-        let window = connection.generate_id();
+        let (connection, screen) = RustConnection::connect(displayname)?;
+        let window = connection.generate_id()?;
 
         {
-            let screen = connection.get_setup().roots().nth(screen as usize)
-                .ok_or(Error::XcbConn(ConnError::ClosedInvalidScreen))?;
-            connection.send_and_check_request(&x::CreateWindow {
-                depth: x::COPY_FROM_PARENT as u8,
-                wid: window,
-                parent: screen.root(),
-                x: 0,
-                y: 0,
-                width: 1,
-                height: 1,
-                border_width: 0,
-                class: x::WindowClass::InputOutput,
-                visual: screen.root_visual(),
-                value_list: &[
-                    x::Cw::EventMask(x::EventMask::STRUCTURE_NOTIFY | x::EventMask::PROPERTY_CHANGE)
-                ],
-            })?;
+            let screen = connection.setup().roots.get(screen)
+                .ok_or(Error::XcbConnect(ConnectError::InvalidScreen))?;
+            connection.create_window(
+                COPY_DEPTH_FROM_PARENT,
+                window,
+                screen.root,
+                0,
+                0,
+                1,
+                1,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                screen.root_visual,
+                &CreateWindowAux::new()
+                    .event_mask(EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE)
+            )?
+                .check()?;
         }
 
         let atoms = Atoms::intern_all(&connection)?;
@@ -116,7 +121,7 @@ impl Context {
         Ok(Context { connection, screen, window, atoms })
     }
 
-    pub fn get_atom(&self, name: &str) -> Result<x::Atom, Error> {
+    pub fn get_atom(&self, name: &str) -> Result<Atom, Error> {
         get_atom(&self.connection, name)
     }
 }
@@ -132,13 +137,13 @@ impl Clipboard {
         let setmap2 = Arc::clone(&setmap);
 
         let (sender, receiver) = channel();
-        let max_length = setter.connection.get_maximum_request_length() as usize * 4;
+        let max_length = setter.connection.maximum_request_bytes();
         thread::spawn(move || run::run(&setter2, &setmap2, max_length, &receiver));
 
         Ok(Clipboard { getter, setter, setmap, send: sender })
     }
 
-    fn process_event<T>(&self, buff: &mut Vec<u8>, selection: x::Atom, target: x::Atom, property: x::Atom, timeout: T, use_xfixes: bool)
+    fn process_event<T>(&self, buff: &mut Vec<u8>, selection: Atom, target: Atom, property: Atom, timeout: T, use_xfixes: bool)
         -> Result<(), Error>
         where T: Into<Option<Duration>>
     {
@@ -172,80 +177,82 @@ impl Clipboard {
             };
 
             match event {
-                xcb::Event::XFixes(xfixes::Event::SelectionNotify(event)) if use_xfixes => {
-                    self.getter.connection.send_and_check_request(&x::ConvertSelection {
-                        requestor: self.getter.window,
+                Event::XfixesSelectionNotify(event) if use_xfixes => {
+                    self.getter.connection.convert_selection(
+                        self.getter.window,
                         selection,
                         target,
                         property,
-                        time: event.timestamp(),
-                    })?;
-                },
-                xcb::Event::X(x::Event::SelectionNotify(event)) => {
-                    if event.selection() != selection { continue };
+                        event.timestamp,
+                    )?.check()?;
+                }
+                Event::SelectionNotify(event) => {
+                    if event.selection != selection { continue };
 
                     // Note that setting the property argument to None indicates that the
                     // conversion requested could not be made.
-                    if event.property().is_none() {
+                    if event.property == Atom::from(AtomEnum::NONE) {
                         break;
                     }
 
-                    let reply = self.getter.connection.wait_for_reply(
-                        self.getter.connection.send_request(&x::GetProperty {
-                            delete: false,
-                            window: self.getter.window,
-                            property: event.property(),
-                            r#type: x::ATOM_NONE,
-                            long_offset: buff.len() as u32,
-                            long_length: ::std::u32::MAX,
-                        })
-                    )?;
+                    let reply = self.getter.connection.get_property(
+                        false,
+                        self.getter.window,
+                        event.property,
+                        AtomEnum::NONE,
+                        buff.len() as u32,
+                        u32::MAX
+                    )?.reply()?;
 
-                    if reply.r#type() == self.getter.atoms.incr {
-                        if let Some(&size) = reply.value::<u32>().get(0) {
-                            buff.reserve(size as usize);
+                    if reply.type_ == self.getter.atoms.incr {
+                        if let Some(mut value) = reply.value32() {
+                            if let Some(size) = value.next() {
+                                buff.reserve(size as usize);
+                            }
                         }
-                        self.getter.connection.send_and_check_request(&x::DeleteProperty {
-                            window: self.getter.window,
+                        self.getter.connection.delete_property(
+                            self.getter.window,
                             property
-                        })?;
+                        )?.check()?;
                         is_incr = true;
                         continue
-                    } else if reply.r#type() != target {
-                        return Err(Error::UnexpectedType(reply.r#type()));
+                    } else if reply.type_ != target {
+                        return Err(Error::UnexpectedType(reply.type_));
                     }
 
-                    buff.extend_from_slice(reply.value());
+                    buff.extend_from_slice(&reply.value);
                     break
-                },
-                xcb::Event::X(x::Event::PropertyNotify(event)) if is_incr => {
-                    if event.state() != x::Property::NewValue { continue };
+                }
 
-                    let cookie = self.getter.connection.send_request(&x::GetProperty {
-                        delete: false,
-                        window: self.getter.window,
+                Event::PropertyNotify(event) if is_incr => {
+                    if event.state != Property::NEW_VALUE { continue };
+
+
+                    let cookie = self.getter.connection.get_property(
+                        false,
+                        self.getter.window,
                         property,
-                        r#type: x::ATOM_NONE,
-                        long_offset: 0,
-                        long_length: 0,
-                    });
-                    let length = self.getter.connection.wait_for_reply(cookie)?.bytes_after();
+                        AtomEnum::NONE,
+                        0,
+                        0
+                    )?;
 
-                    let cookie = self.getter.connection.send_request(&x::GetProperty {
-                        delete: true,
-                        window: self.getter.window,
+                    let length = cookie.reply()?.bytes_after;
+
+                    let cookie = self.getter.connection.get_property(
+                        true,
+                        self.getter.window,
                         property,
-                        r#type: x::ATOM_NONE,
-                        long_offset: 0,
-                        long_length: length,
-                    });
-                    let reply = self.getter.connection.wait_for_reply(cookie)?;
-                    if reply.r#type() != target { continue };
+                        AtomEnum::NONE,
+                        0, length
+                    )?;
+                    let reply = cookie.reply()?;
+                    if reply.type_ != target { continue };
 
-                    let value = reply.value();
+                    let value = reply.value;
 
-                    if value.len() != 0 {
-                        buff.extend_from_slice(value);
+                    if !value.is_empty() {
+                        buff.extend_from_slice(&value);
                     } else {
                         break
                     }
@@ -257,80 +264,80 @@ impl Clipboard {
     }
 
     /// load value.
-    pub fn load<T>(&self, selection: x::Atom, target: x::Atom, property: x::Atom, timeout: T)
+    pub fn load<T>(&self, selection: Atom, target: Atom, property: Atom, timeout: T)
         -> Result<Vec<u8>, Error>
         where T: Into<Option<Duration>>
     {
         let mut buff = Vec::new();
         let timeout = timeout.into();
 
-        self.getter.connection.send_and_check_request(&x::ConvertSelection {
-            requestor: self.getter.window,
+        self.getter.connection.convert_selection(
+            self.getter.window,
             selection,
             target,
             property,
-            time: x::CURRENT_TIME,
-                // FIXME ^
-                // Clients should not use CurrentTime for the time argument of a ConvertSelection request.
-                // Instead, they should use the timestamp of the event that caused the request to be made.
-        })?;
+            CURRENT_TIME,
+            // FIXME ^
+            // Clients should not use CurrentTime for the time argument of a ConvertSelection request.
+            // Instead, they should use the timestamp of the event that caused the request to be made.
+        )?.check()?;
 
         self.process_event(&mut buff, selection, target, property, timeout, false)?;
 
-        self.getter.connection.send_and_check_request(&x::DeleteProperty {
-            window: self.getter.window,
-            property,
-        })?;
+        self.getter.connection.delete_property(
+            self.getter.window,
+            property
+        )?.check()?;
 
         Ok(buff)
     }
 
     /// wait for a new value and load it
-    pub fn load_wait(&self, selection: x::Atom, target: x::Atom, property: x::Atom)
+    pub fn load_wait(&self, selection: Atom, target: Atom, property: Atom)
         -> Result<Vec<u8>, Error>
     {
         let mut buff = Vec::new();
 
-        let screen = &self.getter.connection.get_setup().roots()
-            .nth(self.getter.screen as usize)
-            .ok_or(Error::XcbConn(ConnError::ClosedInvalidScreen))?;
+        let screen = &self.getter.connection.setup().roots.get(self.getter.screen)
+            .ok_or(Error::XcbConnect(ConnectError::InvalidScreen))?;
 
-        self.getter.connection.send_request(&xfixes::QueryVersion {
-            client_major_version: 5,
-            client_minor_version: 0,
-        });
+        xfixes::query_version(
+            &self.getter.connection,
+            5,
+            0,
+        )?;
         // Clear selection sources...
-        self.getter.connection.send_request(&xfixes::SelectSelectionInput {
-            window: screen.root(),
-            selection: self.getter.atoms.primary,
-            event_mask: xfixes::SelectionEventMask::empty(),
-        });
-        self.getter.connection.send_request(&xfixes::SelectSelectionInput {
-            window: screen.root(),
-            selection: self.getter.atoms.clipboard,
-            event_mask: xfixes::SelectionEventMask::empty(),
-        });
+        xfixes::select_selection_input(
+            &self.getter.connection,
+            screen.root,
+            self.getter.atoms.primary,
+            xfixes::SelectionEventMask::default()
+        )?;
+        xfixes::select_selection_input(
+            &self.getter.connection,
+            screen.root,
+            self.getter.atoms.clipboard,
+            xfixes::SelectionEventMask::default()
+        )?;
         // ...and set the one requested now
-        self.getter.connection.send_and_check_request(&xfixes::SelectSelectionInput {
-            window: screen.root(),
+        xfixes::select_selection_input(
+            &self.getter.connection,
+            screen.root,
             selection,
-            event_mask: xfixes::SelectionEventMask::SET_SELECTION_OWNER |
+            xfixes::SelectionEventMask::SET_SELECTION_OWNER |
                 xfixes::SelectionEventMask::SELECTION_CLIENT_CLOSE |
-                xfixes::SelectionEventMask::SELECTION_WINDOW_DESTROY,
-        })?;
+                xfixes::SelectionEventMask::SELECTION_WINDOW_DESTROY
+        )?.check()?;
 
         self.process_event(&mut buff, selection, target, property, None, true)?;
 
-        self.getter.connection.send_and_check_request(&x::DeleteProperty {
-            window: self.getter.window,
-            property,
-        })?;
+        self.getter.connection.delete_property(self.getter.window, property)?.check()?;
 
         Ok(buff)
     }
 
     /// store value.
-    pub fn store<T: Into<Vec<u8>>>(&self, selection: x::Atom, target: x::Atom, value: T)
+    pub fn store<T: Into<Vec<u8>>>(&self, selection: Atom, target: Atom, value: T)
         -> Result<(), Error>
     {
         self.send.send(selection)?;
@@ -339,17 +346,16 @@ impl Clipboard {
             .map_err(|_| Error::Lock)?
             .insert(selection, (target, value.into()));
 
-        self.setter.connection.send_and_check_request(&x::SetSelectionOwner {
-            owner: self.setter.window,
+        self.setter.connection.set_selection_owner(
+            self.setter.window,
             selection,
-            time: x::CURRENT_TIME,
-        })?;
+            CURRENT_TIME
+        )?.check()?;
 
-        let cookie = self.setter.connection.send_request(&x::GetSelectionOwner {
+        if self.setter.connection.get_selection_owner(
             selection
-        });
-        if self.setter.connection.wait_for_reply(cookie)
-            .map(|reply| reply.owner() == self.setter.window)
+        )?.reply()
+            .map(|reply| reply.owner == self.setter.window)
             .unwrap_or(false) {
             Ok(())
         } else {

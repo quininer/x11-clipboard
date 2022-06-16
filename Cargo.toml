@@ -8,8 +8,5 @@ documentation = "https://docs.rs/x11-clipboard/"
 keywords = [ "x11", "xcb", "clipboard" ]
 license = "MIT"
 
-[badges]
-travis-ci = { repository = "quininer/x11-clipboard" }
-
 [dependencies]
-xcb = { version = "1.1.1", features = [ "xfixes" ] }
+x11rb = { version = "0.10.0", features = ["xfixes"]}
