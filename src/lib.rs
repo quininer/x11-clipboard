@@ -3,6 +3,9 @@ extern crate x11rb;
 pub mod error;
 mod run;
 
+pub use x11rb::protocol::xproto::{Atom, Window};
+pub use x11rb::rust_connection::RustConnection;
+
 use std::thread;
 use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
@@ -12,8 +15,7 @@ use x11rb::connection::{Connection, RequestConnection};
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 use x11rb::errors::ConnectError;
 use x11rb::protocol::{Event, xfixes};
-use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, Property, Window, WindowClass};
-use x11rb::rust_connection::RustConnection;
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, CreateWindowAux, EventMask, Property, WindowClass};
 use error::Error;
 
 pub const INCR_CHUNK_SIZE: usize = 4000;
