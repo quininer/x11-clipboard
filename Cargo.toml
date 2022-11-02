@@ -7,6 +7,8 @@ repository = "https://github.com/quininer/x11-clipboard"
 documentation = "https://docs.rs/x11-clipboard/"
 keywords = [ "x11", "xcb", "clipboard" ]
 license = "MIT"
+edition = "2021"
 
 [dependencies]
 x11rb = { version = "0.10.0", features = ["xfixes"]}
+crossbeam-channel = "0.5"
