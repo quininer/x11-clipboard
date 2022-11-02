@@ -1,4 +1,5 @@
 extern crate x11rb;
+extern crate crossbeam_channel;
 
 pub mod error;
 mod run;
@@ -9,8 +10,8 @@ pub use x11rb::rust_connection::RustConnection;
 use std::thread;
 use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
-use std::sync::mpsc::{ Sender, channel };
 use std::collections::HashMap;
+use crossbeam_channel::Sender;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 use x11rb::errors::ConnectError;
@@ -138,7 +139,7 @@ impl Clipboard {
         let setmap = Arc::new(RwLock::new(HashMap::new()));
         let setmap2 = Arc::clone(&setmap);
 
-        let (sender, receiver) = channel();
+        let (sender, receiver) = crossbeam_channel::unbounded();
         let max_length = setter.connection.maximum_request_bytes();
         thread::spawn(move || run::run(&setter2, &setmap2, max_length, &receiver));
 

@@ -1,6 +1,6 @@
 use std::fmt;
-use std::sync::mpsc::SendError;
 use std::error::Error as StdError;
+use crossbeam_channel::SendError;
 use x11rb::errors::{ConnectError, ConnectionError, ReplyError, ReplyOrIdError};
 use x11rb::protocol::xproto::Atom;
 

@@ -1,7 +1,7 @@
 use std::cmp;
 use std::sync::Arc;
-use std::sync::mpsc::{ Receiver, TryRecvError };
 use std::collections::HashMap;
+use crossbeam_channel::{Receiver, TryRecvError};
 use ::{AtomEnum, EventMask};
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;

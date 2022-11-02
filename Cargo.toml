@@ -10,3 +10,4 @@ license = "MIT"
 
 [dependencies]
 x11rb = { version = "0.10.0", features = ["xfixes"]}
+crossbeam-channel = "0.5"
