@@ -100,7 +100,7 @@ pub fn run(context: &Arc<Context>, setmap: &SetMap, max_length: usize, receiver:
                         time: event.time,
                         requestor: event.requestor,
                         selection: event.selection,
-                        target,
+                        target: event.target,
                         property: event.property
                     }
                 );
