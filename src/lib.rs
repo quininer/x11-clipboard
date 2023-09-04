@@ -403,29 +403,7 @@ impl Clipboard {
         target: Atom,
         value: T,
     ) -> Result<(), Error> {
-        self.send.send(selection)?;
-        self.setmap
-            .write()
-            .map_err(|_| Error::Lock)?
-            .insert(selection, vec![(target, value.into())]);
-
-        self.setter
-            .connection
-            .set_selection_owner(self.setter.window, selection, CURRENT_TIME)?
-            .check()?;
-
-        if self
-            .setter
-            .connection
-            .get_selection_owner(selection)?
-            .reply()
-            .map(|reply| reply.owner == self.setter.window)
-            .unwrap_or(false)
-        {
-            Ok(())
-        } else {
-            Err(Error::Owner)
-        }
+        self.store_batch(selection, vec![(target, value)])
     }
 
     /// store a batch of values
