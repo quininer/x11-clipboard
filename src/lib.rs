@@ -430,11 +430,19 @@ impl Clipboard {
 
     /// store a batch of values
     /// usefull for storing multiple targets at once
+    ///
+    /// # Note
+    /// - the batch could not be empty
+    /// - if no conversion is possible for a target, the first item of the batch will be returned to requestor
+    ///   so it is recommended to put the most common target at the front
     pub fn store_batch<T: Into<Vec<u8>>>(
         &self,
         selection: Atom,
         batch: Vec<(Atom, T)>,
     ) -> Result<(), Error> {
+        if batch.is_empty() {
+            return Err(Error::InvalidArgument);
+        }
         self.send.send(selection)?;
 
         let batch: Vec<(Atom, Vec<u8>)> = batch

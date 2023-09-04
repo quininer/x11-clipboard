@@ -1,6 +1,6 @@
+use std::error::Error as StdError;
 use std::fmt;
 use std::sync::mpsc::SendError;
-use std::error::Error as StdError;
 use x11rb::errors::{ConnectError, ConnectionError, ReplyError, ReplyOrIdError};
 use x11rb::protocol::xproto::Atom;
 
@@ -8,6 +8,7 @@ use x11rb::protocol::xproto::Atom;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
+    InvalidArgument,
     Set(SendError<Atom>),
     XcbConnect(ConnectError),
     XcbConnection(ConnectionError),
@@ -23,6 +24,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Error::*;
         match self {
+            InvalidArgument => write!(f, "Invalid argument given"),
             Set(e) => write!(f, "XCB - couldn't set atom: {:?}", e),
             XcbConnect(e) => write!(f, "XCB - couldn't establish conection: {:?}", e),
             XcbConnection(e) => write!(f, "XCB connection error: {:?}", e),
@@ -45,7 +47,7 @@ impl StdError for Error {
             XcbReply(e) => Some(e),
             XcbReplyOrId(e) => Some(e),
             XcbConnect(e) => Some(e),
-            Lock | Timeout | Owner | UnexpectedType(_) => None,
+            InvalidArgument | Lock | Timeout | Owner | UnexpectedType(_) => None,
         }
     }
 }
@@ -57,7 +59,7 @@ macro_rules! define_from {
                 Error::$item(err)
             }
         }
-    }
+    };
 }
 
 define_from!(Set from SendError<Atom>);
