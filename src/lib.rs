@@ -141,6 +141,7 @@ impl Clipboard {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_event<T>(
         &self,
         buff: &mut Vec<u8>,
