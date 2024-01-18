@@ -62,11 +62,15 @@ pub fn run(
             return;
         }
         loop {
-            let Ok(evt) = context.connection.poll_for_event() else {
+            let evt = if let Ok(evt) = context.connection.poll_for_event() {
+                evt
+            } else {
                 // Exit on error
                 return;
             };
-            let Some(event) = evt else {
+            let event = if let Some(event) = evt {
+                event
+            } else {
                 // No event on POLLIN happens, fd being readable doesn't mean theres a complete event ready to read.
                 // Poll again.
                 break;
