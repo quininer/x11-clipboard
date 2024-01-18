@@ -1,6 +1,7 @@
 use std::fmt;
 use std::sync::mpsc::SendError;
 use std::error::Error as StdError;
+use nix::errno::Errno;
 use x11rb::errors::{ConnectError, ConnectionError, ReplyError, ReplyOrIdError};
 use x11rb::protocol::xproto::Atom;
 
@@ -17,6 +18,7 @@ pub enum Error {
     Timeout,
     Owner,
     UnexpectedType(Atom),
+    EventFdCreate(Errno),
 }
 
 impl fmt::Display for Error {
@@ -32,6 +34,7 @@ impl fmt::Display for Error {
             Timeout => write!(f, "Selection timed out"),
             Owner => write!(f, "Failed to set new owner of XCB selection"),
             UnexpectedType(target) => write!(f, "Unexpected Reply type: {:?}", target),
+            EventFdCreate(e) => write!(f, "Failed to create eventfd, errno={e}"),
         }
     }
 }
@@ -45,7 +48,7 @@ impl StdError for Error {
             XcbReply(e) => Some(e),
             XcbReplyOrId(e) => Some(e),
             XcbConnect(e) => Some(e),
-            Lock | Timeout | Owner | UnexpectedType(_) => None,
+            Lock | Timeout | Owner | UnexpectedType(_) | EventFdCreate(_) => None,
         }
     }
 }
