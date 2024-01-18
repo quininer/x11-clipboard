@@ -1,7 +1,7 @@
+use nix::errno::Errno;
+use std::error::Error as StdError;
 use std::fmt;
 use std::sync::mpsc::SendError;
-use std::error::Error as StdError;
-use nix::errno::Errno;
 use x11rb::errors::{ConnectError, ConnectionError, ReplyError, ReplyOrIdError};
 use x11rb::protocol::xproto::Atom;
 
@@ -60,7 +60,7 @@ macro_rules! define_from {
                 Error::$item(err)
             }
         }
-    }
+    };
 }
 
 define_from!(Set from SendError<Atom>);

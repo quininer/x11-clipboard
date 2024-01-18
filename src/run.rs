@@ -1,22 +1,25 @@
-use std::cmp;
-use std::sync::Arc;
-use std::sync::mpsc::{ Receiver, TryRecvError };
-use std::collections::HashMap;
-use std::os::fd::{AsFd, OwnedFd};
+use error::Error;
 use nix::poll::{PollFd, PollFlags};
 use nix::sys::eventfd::EfdFlags;
-use ::{AtomEnum, EventMask};
+use std::cmp;
+use std::collections::HashMap;
+use std::os::fd::{AsFd, OwnedFd};
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
 use x11rb::connection::Connection;
+use x11rb::protocol::xproto::{
+    Atom, ChangeWindowAttributesAux, ConnectionExt, PropMode, Property, SelectionNotifyEvent,
+    Window, SELECTION_NOTIFY_EVENT,
+};
 use x11rb::protocol::Event;
-use x11rb::protocol::xproto::{Atom, ChangeWindowAttributesAux, ConnectionExt, Property, PropMode, SELECTION_NOTIFY_EVENT, SelectionNotifyEvent, Window};
-use ::{ INCR_CHUNK_SIZE, Context, SetMap };
-use error::Error;
+use {AtomEnum, EventMask};
+use {Context, SetMap, INCR_CHUNK_SIZE};
 
 macro_rules! try_continue {
     ( $expr:expr ) => {
         match $expr {
             Some(val) => val,
-            None => continue
+            None => continue,
         }
     };
 }
@@ -25,27 +28,34 @@ struct IncrState {
     selection: Atom,
     requestor: Window,
     property: Atom,
-    pos: usize
+    pos: usize,
 }
-
 
 #[derive(Clone)]
 pub(crate) struct EventFd(pub(crate) Arc<OwnedFd>);
 
-pub(crate) fn create_eventfd() -> Result<EventFd, Error>{
-    let raw = nix::sys::eventfd::eventfd(0, EfdFlags::EFD_CLOEXEC)
-        .map_err(Error::EventFdCreate)?;
+pub(crate) fn create_eventfd() -> Result<EventFd, Error> {
+    let raw = nix::sys::eventfd::eventfd(0, EfdFlags::EFD_CLOEXEC).map_err(Error::EventFdCreate)?;
     Ok(EventFd(Arc::new(raw)))
 }
 
-pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: Receiver<Atom>, evt_fd: EventFd) {
+pub fn run(
+    context: Arc<Context>,
+    setmap: SetMap,
+    max_length: usize,
+    receiver: Receiver<Atom>,
+    evt_fd: EventFd,
+) {
     let mut incr_map = HashMap::<Atom, Atom>::new();
     let mut state_map = HashMap::<Atom, IncrState>::new();
 
     let stream_fd = context.connection.stream().as_fd();
     let borrowed_fd = evt_fd.0.as_fd();
     // Poll both stream and eventfd for new Read-ready events
-    let mut poll_fds = [PollFd::new(&stream_fd, PollFlags::POLLIN), PollFd::new(&borrowed_fd, PollFlags::POLLIN)];
+    let mut poll_fds = [
+        PollFd::new(&stream_fd, PollFlags::POLLIN),
+        PollFd::new(&borrowed_fd, PollFlags::POLLIN),
+    ];
     while nix::poll::poll(&mut poll_fds, -1).is_ok() {
         if let Some(PollFlags::POLLIN) = poll_fds[1].revents() {
             // kill-signal
@@ -63,12 +73,16 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
             };
             loop {
                 match receiver.try_recv() {
-                    Ok(selection) => if let Some(property) = incr_map.remove(&selection) {
-                        state_map.remove(&property);
-                    },
+                    Ok(selection) => {
+                        if let Some(property) = incr_map.remove(&selection) {
+                            state_map.remove(&property);
+                        }
+                    }
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => if state_map.is_empty() {
-                        return
+                    Err(TryRecvError::Disconnected) => {
+                        if state_map.is_empty() {
+                            return;
+                        }
                     }
                 }
             }
@@ -85,7 +99,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
                             event.requestor,
                             event.property,
                             Atom::from(AtomEnum::ATOM),
-                            &[context.atoms.targets, target]
+                            &[context.atoms.targets, target],
                         );
                     } else if value.len() < max_length - 24 {
                         let _ = x11rb::wrapper::ConnectionExt::change_property8(
@@ -94,13 +108,13 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
                             event.requestor,
                             event.property,
                             target,
-                            value
+                            value,
                         );
                     } else {
                         let _ = context.connection.change_window_attributes(
                             event.requestor,
                             &ChangeWindowAttributesAux::new()
-                                .event_mask(EventMask::PROPERTY_CHANGE)
+                                .event_mask(EventMask::PROPERTY_CHANGE),
                         );
                         let _ = x11rb::wrapper::ConnectionExt::change_property32(
                             &context.connection,
@@ -117,8 +131,8 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
                                 selection: event.selection,
                                 requestor: event.requestor,
                                 property: event.property,
-                                pos: 0
-                            }
+                                pos: 0,
+                            },
                         );
                     }
                     let _ = context.connection.send_event(
@@ -132,13 +146,15 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
                             requestor: event.requestor,
                             selection: event.selection,
                             target: event.target,
-                            property: event.property
-                        }
+                            property: event.property,
+                        },
                     );
                     let _ = context.connection.flush();
-                },
+                }
                 Event::PropertyNotify(event) => {
-                    if event.state != Property::DELETE { continue };
+                    if event.state != Property::DELETE {
+                        continue;
+                    };
 
                     let is_end = {
                         let state = try_continue!(state_map.get_mut(&event.atom));
@@ -152,7 +168,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
                             state.requestor,
                             state.property,
                             target,
-                            &value[state.pos..][..len]
+                            &value[state.pos..][..len],
                         );
                         state.pos += len;
                         len == 0
@@ -162,7 +178,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
                         state_map.remove(&event.atom);
                     }
                     let _ = context.connection.flush();
-                },
+                }
                 Event::SelectionClear(event) => {
                     if let Some(property) = incr_map.remove(&event.selection) {
                         state_map.remove(&property);
@@ -171,7 +187,7 @@ pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: R
                         write_setmap.remove(&event.selection);
                     }
                 }
-                _ => ()
+                _ => (),
             }
         }
     }
