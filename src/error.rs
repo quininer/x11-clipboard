@@ -17,6 +17,7 @@ pub enum Error {
     Timeout,
     Owner,
     UnexpectedType(Atom),
+    EventFdCreate,
 }
 
 impl fmt::Display for Error {
@@ -32,6 +33,7 @@ impl fmt::Display for Error {
             Timeout => write!(f, "Selection timed out"),
             Owner => write!(f, "Failed to set new owner of XCB selection"),
             UnexpectedType(target) => write!(f, "Unexpected Reply type: {:?}", target),
+            EventFdCreate => write!(f, "Failed to create eventfd"),
         }
     }
 }
@@ -45,7 +47,7 @@ impl StdError for Error {
             XcbReply(e) => Some(e),
             XcbReplyOrId(e) => Some(e),
             XcbConnect(e) => Some(e),
-            Lock | Timeout | Owner | UnexpectedType(_) => None,
+            Lock | Timeout | Owner | UnexpectedType(_) | EventFdCreate => None,
         }
     }
 }
