@@ -9,4 +9,4 @@ keywords = [ "x11", "xcb", "clipboard" ]
 license = "MIT"
 
 [dependencies]
-x11rb = { version = "0.12.0", features = ["xfixes"]}
+x11rb = { version = "0.13.0", features = ["xfixes"]}
