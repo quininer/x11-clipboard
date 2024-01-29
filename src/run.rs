@@ -46,7 +46,7 @@ pub(crate) fn create_eventfd() -> Result<EventFd, Error>{
     Ok(EventFd(Arc::new(event_fd_owned)))
 }
 
-pub fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: Receiver<Atom>, evt_fd: EventFd) {
+pub(crate) fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: Receiver<Atom>, evt_fd: EventFd) {
     let mut incr_map = HashMap::<Atom, Atom>::new();
     let mut state_map = HashMap::<Atom, IncrState>::new();
 
