@@ -12,14 +12,14 @@ use std::time::{ Duration, Instant };
 use std::sync::{ Arc, RwLock };
 use std::sync::mpsc::{ Sender, channel };
 use std::collections::HashMap;
-use std::os::fd::AsRawFd;
+use std::os::fd::OwnedFd;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 use x11rb::errors::ConnectError;
 use x11rb::protocol::{Event, xfixes};
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, CreateWindowAux, EventMask, Property, WindowClass};
 use error::Error;
-use run::{create_eventfd, EventFd};
+use run::{create_pipe_drop_fd, PipeDropFds};
 
 pub const INCR_CHUNK_SIZE: usize = 4000;
 const POLL_DURATION: u64 = 50;
@@ -76,20 +76,10 @@ pub struct Clipboard {
     pub setter: Arc<Context>,
     setmap: SetMap,
     send: Sender<Atom>,
-    efd: EventFd,
+    // Relying on the Drop in OwnedFd to close the fd
+    _drop_fd: OwnedFd,
 }
 
-impl Drop for Clipboard {
-    fn drop(&mut self) {
-        // Need to write any 8 bytes that are not 0 to trigger a read-ready
-        const ANY: &[u8; 8] = &[1, 1, 1, 1, 1, 1, 1, 1];
-        unsafe {
-            // Safety: The FD is valid and owned, the buffer has a static lifetime and is not mutated
-            // Best attempt close stream on thread
-            let _ = libc::write(self.efd.0.as_raw_fd(), ANY.as_ptr() as *const libc::c_void, ANY.len());
-        }
-    }
-}
 pub struct Context {
     pub connection: RustConnection,
     pub screen: usize,
@@ -153,13 +143,14 @@ impl Clipboard {
         let setmap = Arc::new(RwLock::new(HashMap::new()));
         let setmap2 = Arc::clone(&setmap);
 
-        let efd = create_eventfd()?;
-        let efd_c = efd.clone();
+        let PipeDropFds {
+            read_pipe, write_pipe
+        } = create_pipe_drop_fd()?;
         let (sender, receiver) = channel();
         let max_length = setter.connection.maximum_request_bytes();
-        thread::spawn(move || run::run(setter2, setmap2, max_length, receiver, efd_c));
+        thread::spawn(move || run::run(setter2, setmap2, max_length, receiver, read_pipe));
 
-        Ok(Clipboard { getter, setter, setmap, send: sender, efd })
+        Ok(Clipboard { getter, setter, setmap, send: sender, _drop_fd: write_pipe })
     }
 
     fn process_event<T>(&self, buff: &mut Vec<u8>, selection: Atom, target: Atom, property: Atom, timeout: T, use_xfixes: bool, sequence_number: u64)

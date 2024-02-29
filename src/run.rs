@@ -26,46 +26,55 @@ struct IncrState {
     pos: usize
 }
 
+pub(crate) struct PipeDropFds {
+    pub(crate) read_pipe: OwnedFd,
+    pub(crate) write_pipe: OwnedFd,
+}
 
-#[derive(Clone)]
-pub(crate) struct EventFd(pub(crate) Arc<OwnedFd>);
-
-pub(crate) fn create_eventfd() -> Result<EventFd, Error>{
-    let event_fd_owned = unsafe {
-        // Docs: https://man7.org/linux/man-pages/man2/eventfd.2.html
-        // Safety: No pointer passing or other spookiness, used correctly according to the above docs
-        let event_fd_res = libc::eventfd(0, libc::EFD_CLOEXEC);
-        // Could check that it's bigger than STDOUT, STDERR, STDIN
-        if event_fd_res < 0 {
+pub(crate) fn create_pipe_drop_fd() -> Result<PipeDropFds, Error>{
+    let pipe_drop_fds = unsafe {
+        // Docs Linux: https://man7.org/linux/man-pages/man2/pipe.2.html
+        // Posix: https://pubs.opengroup.org/onlinepubs/9699919799/
+        // Safety: See above docs, api expects a 2-long array of file descriptors, and flags
+        let mut pipes: [libc::c_int; 2] = [0, 0];
+        let pipe_create_res = libc::pipe(pipes.as_mut_ptr());
+        if pipe_create_res < 0 {
             // Don't want to have to read from errno_location, just skip propagating errno.
             return Err(Error::EventFdCreate);
         }
-        // Safety: Trusting the OS to give a correct FD
-        OwnedFd::from_raw_fd(event_fd_res)
+        // Safety: Trusting the OS to give correct FDs
+        let read_pipe = OwnedFd::from_raw_fd(pipes[0]);
+        let write_pipe = OwnedFd::from_raw_fd(pipes[1]);
+        PipeDropFds {
+            read_pipe,
+            write_pipe,
+        }
     };
-    Ok(EventFd(Arc::new(event_fd_owned)))
+    Ok(pipe_drop_fds)
 }
 
-pub(crate) fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: Receiver<Atom>, evt_fd: EventFd) {
+pub(crate) fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, receiver: Receiver<Atom>, read_pipe: OwnedFd) {
     let mut incr_map = HashMap::<Atom, Atom>::new();
     let mut state_map = HashMap::<Atom, IncrState>::new();
 
     let stream_fd = context.connection.stream().as_fd();
-    let borrowed_fd = evt_fd.0.as_fd();
-    // Poll both stream and eventfd for new Read-ready events
+    let borrowed_fd = read_pipe.as_fd();
+    // Poll stream for new Read-ready events, check if the other side of the pipe has been dropped
     let mut pollfds: [libc::pollfd; 2] = [libc::pollfd {
         fd: stream_fd.as_raw_fd(),
         events: libc::POLLIN,
         revents: 0,
     }, libc::pollfd {
         fd: borrowed_fd.as_raw_fd(),
-        events: libc::POLLIN,
+        // If the other end is dropped, this pipe will get a HUP on poll
+        events: libc::POLLHUP,
         revents: 0,
     }];
     let len = pollfds.len();
     loop {
         unsafe {
-            // Docs: https://man7.org/linux/man-pages/man2/poll.2.html
+            // Docs Linux: https://man7.org/linux/man-pages/man2/poll.2.html
+            // Posix: https://pubs.opengroup.org/onlinepubs/9699919799/
             // Safety: Passing in a mutable pointer that lives for the duration of the call, the length is
             // set to the length of that pointer.
             // Any negative value (-1 for example) means infinite timeout.
@@ -75,8 +84,8 @@ pub(crate) fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, rece
                 return;
             }
         }
-        if pollfds[1].revents & libc::POLLIN != 0 {
-            // kill-signal on eventfd
+        if pollfds[1].revents & libc::POLLHUP != 0 {
+            // kill-signal on pollfd
             return;
         }
         loop {
