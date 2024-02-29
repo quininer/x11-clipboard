@@ -17,6 +17,7 @@ pub enum Error {
     Timeout,
     Owner,
     UnexpectedType(Atom),
+    // Could change name on next major, since this uses pipes now.
     EventFdCreate,
 }
 
