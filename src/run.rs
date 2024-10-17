@@ -37,7 +37,7 @@ pub(crate) fn create_pipe_drop_fd() -> Result<PipeDropFds, Error>{
         // Posix: https://pubs.opengroup.org/onlinepubs/9699919799/
         // Safety: See above docs, api expects a 2-long array of file descriptors, and flags
         let mut pipes: [libc::c_int; 2] = [0, 0];
-        let pipe_create_res = libc::pipe(pipes.as_mut_ptr());
+        let pipe_create_res = libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC);
         if pipe_create_res < 0 {
             // Don't want to have to read from errno_location, just skip propagating errno.
             return Err(Error::EventFdCreate);
