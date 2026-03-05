@@ -80,6 +80,9 @@ pub(crate) fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, rece
             // Any negative value (-1 for example) means infinite timeout.
             let poll_res = libc::poll(&mut pollfds as *mut libc::pollfd, len as libc::nfds_t, -1);
             if poll_res < 0 {
+                if errno::errno().0 == libc::EINTR {
+                    continue;
+                }
                 // Error polling, can't continue
                 return;
             }
