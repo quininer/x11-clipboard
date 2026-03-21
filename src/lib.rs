@@ -372,14 +372,6 @@ impl Clipboard {
             CURRENT_TIME
         )?.check()?;
 
-        if self.setter.connection.get_selection_owner(
-            selection
-        )?.reply()
-            .map(|reply| reply.owner == self.setter.window)
-            .unwrap_or(false) {
-            Ok(())
-        } else {
-            Err(Error::Owner)
-        }
+        Ok(())
     }
 }
