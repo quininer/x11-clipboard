@@ -1,0 +1,14 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt --update install -y libxcb-shape0-dev libxcb-xfixes0-dev xvfb
+      - run: rustup default stable
+      - run: xvfb-run -a cargo test --all
