@@ -9,6 +9,5 @@ keywords = [ "x11", "xcb", "clipboard" ]
 license = "MIT"
 
 [dependencies]
-errno = { version = "0.3.14" }
 libc = { version = "0.2.152" }
 x11rb = { version = "0.13.0", features = ["xfixes"]}

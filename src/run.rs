@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{ Receiver, TryRecvError };
 use std::collections::HashMap;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 use ::{AtomEnum, EventMask};
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
@@ -80,9 +81,11 @@ pub(crate) fn run(context: Arc<Context>, setmap: SetMap, max_length: usize, rece
             // Any negative value (-1 for example) means infinite timeout.
             let poll_res = libc::poll(&mut pollfds as *mut libc::pollfd, len as libc::nfds_t, -1);
             if poll_res < 0 {
-                if errno::errno().0 == libc::EINTR {
+                // Retry if poll was interrupted, this can happen during suspend.
+                if IoError::last_os_error().kind() == IoErrorKind::Interrupted {
                     continue;
                 }
+
                 // Error polling, can't continue
                 return;
             }
